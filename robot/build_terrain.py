@@ -21,6 +21,7 @@ from config import (
     TERRAIN_FILE, GEOLOGIE_COEFFICIENT, GEOLOGIE_MOTS_CLES,
 )
 from fetch_sim import fetch_sim_features, organiser_par_maille
+from foret import enrichir_cellules
 
 
 def charger_contour_48():
@@ -82,11 +83,11 @@ def altitudes_par_lots(coords, lot=90):
 
 
 def main():
-    print("1/4 Récupération de la grille SIM...")
+    print("1/5 Récupération de la grille SIM...")
     mailles = organiser_par_maille(fetch_sim_features())
     print(f"    {len(mailles)} mailles dans l'emprise brute")
 
-    print("2/4 Clip au contour du département 48...")
+    print("2/5 Clip au contour du département 48...")
     contour = charger_contour_48()
     dedans = {}
     for mid, m in mailles.items():
@@ -96,14 +97,14 @@ def main():
             dedans[mid] = m
     print(f"    {len(dedans)} mailles en Lozère")
 
-    print("3/4 Altitudes (Open-Meteo)...")
+    print("3/5 Altitudes (Open-Meteo)...")
     ids = list(dedans.keys())
     coords = [(dedans[i]["lat"], dedans[i]["lon"]) for i in ids]
     alts = altitudes_par_lots(coords)
     for i, mid in enumerate(ids):
         dedans[mid]["altitude"] = alts[i] if i < len(alts) else None
 
-    print("4/4 Géologie (BRGM), une requête par maille...")
+    print("4/5 Géologie (BRGM), une requête par maille...")
     cellules = []
     for n, mid in enumerate(ids, 1):
         m = dedans[mid]
@@ -122,6 +123,9 @@ def main():
         if n % 10 == 0:
             print(f"    {n}/{len(ids)} mailles classées")
         time.sleep(0.3)
+
+    print("5/5 Boisement (BD Forêt V2)...")
+    enrichir_cellules(cellules)
 
     with open(TERRAIN_FILE, "w", encoding="utf-8") as fp:
         json.dump({"cellules": cellules}, fp, ensure_ascii=False)

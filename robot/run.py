@@ -41,7 +41,10 @@ def main():
     for i, cell in enumerate(terrain):
         mid = cell["maille_id"]
         temp = temps[i] if i < len(temps) else None
-        coef = cell["coef_terrain"]
+        # Coefficient terrain = géologie × boisement (deux facteurs statiques).
+        coef_geo = cell["coef_terrain"]
+        coef_foret = cell.get("coef_foret", 1.0)
+        coef = coef_geo * coef_foret
         hist_sim = sim.get(mid, {}).get("historique", [])
 
         # Série d'indices sur l'historique (température maintenue = actuelle).
@@ -70,6 +73,9 @@ def main():
                 "altitude": cell["altitude"],
                 "geologie_classe": cell["geologie_classe"],
                 "geologie_descr": cell["geologie_descr"],
+                "coef_geologie": coef_geo,
+                "coef_foret": coef_foret,
+                "taux_boise": cell.get("taux_boise"),
                 "coef_terrain": coef,
                 "s_humidite": res["s_humidite"],
                 "s_pluie": res["s_pluie"],

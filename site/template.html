@@ -122,10 +122,11 @@ function montrerDetail(p){
   el.innerHTML = `
     <h2>Maille · ${p.altitude!=null? Math.round(p.altitude)+" m":""}
       <span class="pill">${geo}</span></h2>
-    <p class="hint">${p.geologie_descr||""}${p.coef_terrain<0.5?" — terrain défavorable au cèpe (calcaire), indice fortement réduit.":""}</p>
+    <p class="hint">${p.geologie_descr||""}${p.coef_geologie!=null&&p.coef_geologie<0.5?" — terrain défavorable au cèpe (calcaire), indice réduit.":""}${p.coef_foret!=null&&p.coef_foret<0.6?" — maille peu boisée, potentiel réduit faute d'arbres hôtes.":""}</p>
     <div class="metrics">
       ${metric("Indice cèpe", (p.indice!=null?p.indice:"—")+" · "+p.niveau)}
       ${metric("Pousse estimée", "~"+p.lag_jours+" j")}
+      ${metric("Boisement", p.taux_boise!=null?Math.round(p.taux_boise*100)+" %":"—")}
       ${metric("Humidité sol (SWI)", p.swi!=null?p.swi:"—")}
       ${metric("Pluie 15 j", p.pluie_15j!=null?p.pluie_15j+" mm":"—")}
       ${metric("Température", p.temp!=null?p.temp+" °C":"—")}

@@ -28,6 +28,12 @@ BRGM_WFS_TYPENAME = "ms:LITHO_1M_SIMPLIFIEE"
 # Open-Meteo : température quotidienne par point, gratuit et sans clé.
 OPENMETEO_URL = "https://api.open-meteo.com/v1/forecast"
 
+# BD Forêt V2 (IGN), via la Géoplateforme : occupation forestière détaillée.
+# Sert à estimer le taux de boisement de chaque maille (filtre forêt/non-forêt)
+# et, plus tard, l'essence (chêne, hêtre, conifère...). Gratuit, sans clé.
+BDFORET_WFS_URL = "https://data.geopf.fr/wfs/ows"
+BDFORET_WFS_TYPENAME = "LANDCOVER.FORESTINVENTORY.V2:formation_vegetale"
+
 # Contour du département (GeoJSON communautaire, stable).
 DEPT48_GEOJSON_URL = (
     "https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/"
@@ -57,6 +63,43 @@ GEOLOGIE_MOTS_CLES = {
     "neutre": ["basalt", "alluv", "argile", "sable", "colluv", "molasse",
                "cendre", "scorie", "tuf"],
 }
+
+# --- Filtre forêt (BD Forêt V2) → coefficient de boisement -----------------
+# Le cèpe est mycorhizien : sans arbre hôte, aucune pousse, quelle que soit
+# la météo. On pondère chaque classe forestière (tfv_g11) par sa "valeur
+# boisée", puis on somme la surface pondérée des polygones DANS la maille,
+# divisée par la surface de la maille, pour obtenir un taux boisé pondéré.
+#
+# Poids par classe (0 = pas d'arbre exploitable, 1 = couvert forestier plein).
+# - forêt fermée : couvert dense, hôtes potentiels -> 1.0
+# - forêt ouverte : arbres épars, encore favorable -> 0.6
+# - peupleraie : ce sont des arbres mais le peuplier n'est PAS un hôte du
+#   cèpe -> faible (0.3), sera affiné quand on gèrera l'essence.
+# Tout le reste (lande, pelouse, coupe rase "sans couvert arboré") = 0.
+FORET_POIDS = {
+    "Forêt fermée feuillus": 1.0,
+    "Forêt fermée conifères": 1.0,
+    "Forêt fermée mixte": 1.0,
+    "Forêt fermée sans couvert arboré": 0.0,   # coupe rase : pas d'arbre
+    "Forêt ouverte feuillus": 0.6,
+    "Forêt ouverte conifères": 0.6,
+    "Forêt ouverte mixte": 0.6,
+    "Peupleraie": 0.3,
+    "Lande": 0.0,
+    "Formation herbacée": 0.0,
+}
+
+# Conversion taux boisé -> coefficient multiplicateur de l'indice.
+# Rampe SATURÉE : le rôle du filtre est d'écarter les mailles quasi nues,
+# pas de pénaliser les paysages mixtes. Dès que la maille atteint
+# FORET_SATURATION de boisement, il y a largement de quoi chercher -> coef 1.
+# coef_foret = min(1, taux_boise / FORET_SATURATION).
+#   taux 0 %  -> 0    | 15 % -> 0.5 | >= 30 % -> 1.0
+FORET_SATURATION = 0.30
+
+# Plancher : on n'annule jamais totalement une maille (donnée BD Forêt
+# imparfaite, lisières hors polygone...). Coef minimal appliqué.
+FORET_COEF_MIN = 0.05
 
 # --- Paramètres de l'indice cèpe -------------------------------------------
 # L'indice combine humidité du sol, pluie récente et température, sur 0-100.

@@ -47,8 +47,10 @@ jobs:
             echo "::error::Le secret SITE_PASSWORD est absent. Ajoute-le dans Settings > Secrets and variables > Actions."
             exit 1
           fi
-          npx --yes staticrypt@3 site/index.html -p "$PW" --remember 3 -d public
-          # StatiCrypt écrit public/index.html (page chiffrée, prête à publier)
+          npx --yes staticrypt@3 site/index.html -p "$PW" --short --remember 3 -d public
+          # StatiCrypt écrit public/index.html (page chiffrée, prête à publier).
+          # --short : accepte un mot de passe court sans poser de question interactive.
+          test -f public/index.html || { echo "::error::public/index.html non généré"; exit 1; }
 
       - name: Préparer l'artefact Pages
         uses: actions/upload-pages-artifact@v3

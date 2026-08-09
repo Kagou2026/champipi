@@ -15,11 +15,13 @@ reprojeter en Lambert-93 pour un simple rapport.
 import time
 
 import requests
-from shapely.geometry import shape
+from shapely.geometry import shape, mapping
+from shapely.ops import unary_union
 
 from config import (
     BDFORET_WFS_URL, BDFORET_WFS_TYPENAME,
     FORET_POIDS, FORET_SATURATION, FORET_COEF_MIN,
+    FORET_SIMPLIFY_TOL, FORET_COORD_DECIMALES,
 )
 
 
@@ -94,6 +96,79 @@ def _resultat_neutre(note):
     """Valeurs neutres (coef 1) : on ne pénalise pas sans donnée fiable."""
     return {"taux_boise": None, "coef_foret": 1.0,
             "foret_repartition": {}, "foret_note": note}
+
+
+def _polygones(geom):
+    """Extrait les parties surfaciques (Polygon) d'une géométrie shapely.
+
+    L'intersection polygone∩maille peut renvoyer des lignes/points (contacts)
+    ou une GeometryCollection ; on ne garde que le surfacique.
+    """
+    if geom.is_empty:
+        return []
+    gt = geom.geom_type
+    if gt == "Polygon":
+        return [geom]
+    if gt == "MultiPolygon":
+        return list(geom.geoms)
+    if gt == "GeometryCollection":
+        out = []
+        for g in geom.geoms:
+            out.extend(_polygones(g))
+        return out
+    return []  # LineString, Point, etc.
+
+
+def _arrondir(o, nd):
+    """Arrondit récursivement les coordonnées d'une géométrie GeoJSON."""
+    if isinstance(o, (list, tuple)):
+        if o and isinstance(o[0], (int, float)):
+            return [round(o[0], nd), round(o[1], nd)]
+        return [_arrondir(x, nd) for x in o]
+    return o
+
+
+def emprise_forestiere(geometry, timeout=120):
+    """Renvoie la géométrie GeoJSON des forêts DANS la maille, ou None.
+
+    Dissout tous les polygones boisés (poids > 0) clippés à la maille, puis
+    simplifie et arrondit les coordonnées pour alléger la page. None si la
+    maille ne contient aucune forêt exploitable (rien à dessiner : causse,
+    ville, champs...).
+    """
+    maille = shape(geometry)
+    try:
+        feats = fetch_bdforet(maille, timeout=timeout)
+    except Exception as e:
+        print(f"  ! BD Forêt échec emprise : {e}")
+        return None
+
+    polys = []
+    for f in feats:
+        classe = (f.get("properties") or {}).get("tfv_g11")
+        if FORET_POIDS.get(classe, 0.0) <= 0:
+            continue
+        try:
+            inter = shape(f["geometry"]).intersection(maille)
+        except Exception:
+            continue
+        polys.extend(_polygones(inter))
+
+    if not polys:
+        return None
+    union = unary_union(polys).simplify(FORET_SIMPLIFY_TOL, preserve_topology=True)
+    union = union.buffer(0)  # répare d'éventuelles auto-intersections
+    if union.is_empty:
+        return None
+    g = mapping(union)
+    if "coordinates" not in g:  # GeometryCollection résiduelle : on filtre
+        union = unary_union(_polygones(union))
+        g = mapping(union)
+        if "coordinates" not in g:
+            return None
+    g = mapping(union)
+    g["coordinates"] = _arrondir(g["coordinates"], FORET_COORD_DECIMALES)
+    return g
 
 
 def enrichir_cellules(cellules, pause=0.4, log=print):

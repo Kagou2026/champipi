@@ -98,12 +98,12 @@ document.getElementById("m-best").textContent = best ? (best.indice+" / 100") : 
 // Carte
 const map = L.map("map",{scrollWheelZoom:true}).setView([44.52,3.55],9);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-  {maxZoom:17, attribution:"© OpenStreetMap · Indice : SIM Météo-France, BRGM, Open-Meteo"}).addTo(map);
+  {maxZoom:17, attribution:"© OpenStreetMap · Indice : SIM Météo-France, BRGM, Open-Meteo · Forêts : BD Forêt V2 IGN"}).addTo(map);
 
 let chart=null;
 function style(f){
-  return {fillColor:couleur(f.properties.indice), weight:1, color:"#5b5b52",
-          fillOpacity:0.68, opacity:0.6};
+  return {fillColor:couleur(f.properties.indice), weight:0.5, color:"#3d3d36",
+          fillOpacity:0.72, opacity:0.45};
 }
 const layer = L.geoJSON(D.geojson,{
   style,

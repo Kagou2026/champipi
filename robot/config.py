@@ -42,6 +42,7 @@ DEPT48_GEOJSON_URL = (
 
 # --- Fichiers produits ------------------------------------------------------
 TERRAIN_FILE = "data/terrain.json"        # statique, calculé une fois
+FORET_GEOM_FILE = "data/foret_geom.json"  # emprise forestière par maille (statique)
 SITE_TEMPLATE = "site/template.html"      # gabarit de la page
 SITE_OUTPUT = "site/index.html"           # page auto-portée (données embarquées)
 
@@ -100,6 +101,12 @@ FORET_SATURATION = 0.30
 # Plancher : on n'annule jamais totalement une maille (donnée BD Forêt
 # imparfaite, lisières hors polygone...). Coef minimal appliqué.
 FORET_COEF_MIN = 0.05
+
+# Rendu carte "emprise forestière" : la géométrie forêt est simplifiée pour
+# alléger la page autoportée. Tolérance en degrés (~0.0015° ≈ 150 m) et
+# arrondi des coordonnées, invisibles à l'échelle départementale.
+FORET_SIMPLIFY_TOL = 0.0015
+FORET_COORD_DECIMALES = 5
 
 # --- Paramètres de l'indice cèpe -------------------------------------------
 # L'indice combine humidité du sol, pluie récente et température, sur 0-100.

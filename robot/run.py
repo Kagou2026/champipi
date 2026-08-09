@@ -12,7 +12,8 @@ Le chiffrement de la page est réalisé ensuite par le workflow GitHub Actions.
 import json
 from datetime import datetime, timezone
 
-from config import (TERRAIN_FILE, SITE_TEMPLATE, SITE_OUTPUT, LAG_JOURS_PLAINE)
+from config import (TERRAIN_FILE, FORET_GEOM_FILE, SITE_TEMPLATE, SITE_OUTPUT,
+                    LAG_JOURS_PLAINE)
 from fetch_sim import fetch_sim_features, organiser_par_maille
 from fetch_temp import temperatures_par_maille
 from compute_index import calcul_indice, niveau, lag_jours
@@ -23,10 +24,21 @@ def charger_terrain():
         return json.load(fp)["cellules"]
 
 
+def charger_foret_geom():
+    """Emprises forestières par maille (rendu carte). Absent = pas encore
+    généré : on retombera sur les carrés 8 km."""
+    try:
+        with open(FORET_GEOM_FILE, encoding="utf-8") as fp:
+            return json.load(fp)
+    except FileNotFoundError:
+        return {}
+
+
 def main():
     print("1/5 Chargement du terrain...")
     terrain = charger_terrain()
-    print(f"    {len(terrain)} mailles")
+    foret_geom = charger_foret_geom()
+    print(f"    {len(terrain)} mailles, {len(foret_geom)} emprises forestières")
 
     print("2/5 Données SIM (humidité, pluie)...")
     sim = organiser_par_maille(fetch_sim_features())
@@ -59,9 +71,20 @@ def main():
         if res["indice"] is not None:
             indices_jour.append(res["indice"])
 
+        # Rendu "emprise forestière" : on dessine la forêt de la maille, pas le
+        # carré 8 km. Une maille sans forêt (causse, ville, champs) n'est pas
+        # dessinée du tout. Repli sur le carré si les emprises ne sont pas
+        # encore générées.
+        if foret_geom:
+            geom = foret_geom.get(mid)
+            if geom is None:
+                continue  # rien de boisé ici : aucune surcouche
+        else:
+            geom = cell["geometry"]
+
         features.append({
             "type": "Feature",
-            "geometry": cell["geometry"],
+            "geometry": geom,
             "properties": {
                 "maille_id": mid,
                 "indice": res["indice"],

@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Fichiers de travail temporaires
+*.tmp
+sim_sample.json
+brgm_caps.xml
+
+# La page générée est déployée par le workflow, pas versionnée en clair.
+# (On garde template.html ; index.html est régénéré puis chiffré.)
+site/index.html
+
+# Sortie de chiffrement StatiCrypt + config auto-générée
+public/
+_public_test/
+.staticrypt.json
+
+# macOS
+.DS_Store

@@ -1,0 +1,67 @@
+name: Champipi — mise à jour quotidienne
+
+on:
+  schedule:
+    - cron: "0 5 * * *"      # tous les jours ~07h (heure de Paris l'été)
+  workflow_dispatch:          # permet aussi un lancement manuel
+
+# Droits nécessaires au déploiement GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Une seule exécution à la fois
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances Python
+        run: pip install -r requirements.txt
+
+      - name: Lancer le robot (génère site/index.html)
+        run: python robot/run.py
+
+      - name: Installer Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Chiffrer la page (mot de passe + mémorisation 3 jours)
+        env:
+          PW: ${{ secrets.SITE_PASSWORD }}
+        run: |
+          if [ -z "$PW" ]; then
+            echo "::error::Le secret SITE_PASSWORD est absent. Ajoute-le dans Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          npx --yes staticrypt@3 site/index.html -p "$PW" --remember 3 -d public
+          # StatiCrypt écrit public/index.html (page chiffrée, prête à publier)
+
+      - name: Préparer l'artefact Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Déployer sur GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

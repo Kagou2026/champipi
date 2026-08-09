@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Champipi — Cèpes en Lozère</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --n0:#9e9e9e; --n1:#b71c1c; --n2:#ef6c00; --n3:#f9a825; --n4:#7cb342; --n5:#2e7d32;
+    --bg:#f5f4f0; --panel:#ffffff; --ink:#2b2b28; --muted:#6b6b63; --line:#e2e0da;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--ink);background:var(--bg)}
+  #app{display:flex;flex-direction:column;height:100%}
+  header{padding:12px 18px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;align-items:center;gap:14px}
+  header h1{font-size:18px;margin:0;font-weight:650}
+  header h1 span{opacity:.55;font-weight:400}
+  .dept{display:flex;align-items:center;gap:10px;margin-left:auto;font-size:13px;color:var(--muted)}
+  .badge{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:20px;background:#f0efe9;font-weight:600;color:var(--ink)}
+  .dot{width:12px;height:12px;border-radius:50%}
+  main{flex:1;display:flex;min-height:0}
+  #map{flex:1;min-width:0}
+  aside{width:340px;max-width:42vw;background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;padding:16px}
+  aside h2{font-size:15px;margin:0 0 4px}
+  .hint{color:var(--muted);font-size:13px;line-height:1.5}
+  .metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}
+  .metric{background:#faf9f5;border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+  .metric .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .metric .v{font-size:19px;font-weight:650;margin-top:2px}
+  .chartwrap{margin-top:10px;height:180px}
+  .top{margin-top:8px;font-size:13px}
+  .top .row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed var(--line)}
+  .legend{font-size:12px;color:var(--muted);line-height:1.9;margin-top:14px}
+  .legend .li{display:flex;align-items:center;gap:8px}
+  .foot{margin-top:16px;font-size:11px;color:var(--muted);line-height:1.6;border-top:1px solid var(--line);padding-top:10px}
+  .pill{font-size:11px;padding:2px 8px;border-radius:20px;background:#f0efe9;color:var(--muted)}
+  @media(max-width:760px){main{flex-direction:column}aside{width:100%;max-width:none;border-left:none;border-top:1px solid var(--line);max-height:46%}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🍄 Champipi <span>· cèpes en Lozère</span></h1>
+    <div class="dept">
+      <span id="dept-date"></span>
+      <span class="badge"><span class="dot" id="dept-dot"></span><span id="dept-val"></span></span>
+    </div>
+  </header>
+  <main>
+    <div id="map"></div>
+    <aside>
+      <div id="detail">
+        <h2>Indice du jour</h2>
+        <p class="hint">Cliquez une maille sur la carte pour voir son indice cèpe, ses composantes et l'évolution sur 15 jours.</p>
+        <div class="metrics">
+          <div class="metric"><div class="k">Moyenne 48</div><div class="v" id="m-moy">—</div></div>
+          <div class="metric"><div class="k">Meilleure maille</div><div class="v" id="m-best">—</div></div>
+        </div>
+        <div class="top" id="top-zones"></div>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="foot" id="foot"></div>
+    </aside>
+  </main>
+</div>
+<script>
+const CHAMPIPI = /*__CHAMPIPI_DATA__*/null;
+
+const NIVEAUX = [
+  {max:15, label:"très faible", col:"var(--n1)"},
+  {max:35, label:"faible",      col:"var(--n2)"},
+  {max:55, label:"moyen",       col:"var(--n3)"},
+  {max:75, label:"bon",         col:"var(--n4)"},
+  {max:Infinity, label:"excellent", col:"var(--n5)"},
+];
+function couleur(indice){
+  if(indice===null||indice===undefined) return "#9e9e9e";
+  return NIVEAUX.find(n=>indice<n.max).col
+    .replace("var(--n1)","#b71c1c").replace("var(--n2)","#ef6c00")
+    .replace("var(--n3)","#f9a825").replace("var(--n4)","#7cb342").replace("var(--n5)","#2e7d32");
+}
+
+// En-tête département
+const D = CHAMPIPI;
+document.getElementById("dept-date").textContent =
+  D.date_donnees ? ("Données du "+D.date_donnees) : "";
+document.getElementById("dept-val").textContent =
+  (D.moyenne_departement!==null? D.moyenne_departement : "—")+" · "+D.niveau_departement;
+document.getElementById("dept-dot").style.background = couleur(D.moyenne_departement);
+document.getElementById("m-moy").textContent =
+  (D.moyenne_departement!==null? D.moyenne_departement : "—")+" / 100";
+const best = D.top && D.top.length ? D.top[0] : null;
+document.getElementById("m-best").textContent = best ? (best.indice+" / 100") : "—";
+
+// Carte
+const map = L.map("map",{scrollWheelZoom:true}).setView([44.52,3.55],9);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  {maxZoom:17, attribution:"© OpenStreetMap · Indice : SIM Météo-France, BRGM, Open-Meteo"}).addTo(map);
+
+let chart=null;
+function style(f){
+  return {fillColor:couleur(f.properties.indice), weight:1, color:"#5b5b52",
+          fillOpacity:0.68, opacity:0.6};
+}
+const layer = L.geoJSON(D.geojson,{
+  style,
+  onEachFeature:(f,l)=>{
+    l.on("click",()=>montrerDetail(f.properties));
+    l.on("mouseover",()=>l.setStyle({weight:2.5,fillOpacity:0.85}));
+    l.on("mouseout",()=>layer.resetStyle(l));
+  }
+}).addTo(map);
+try{ map.fitBounds(layer.getBounds(),{padding:[10,10]}); }catch(e){}
+
+function metric(k,v){return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;}
+function montrerDetail(p){
+  const geo = {acide:"sol acide", neutre:"sol neutre", calcaire:"sol calcaire", inconnu:"sol ?"}[p.geologie_classe]||p.geologie_classe;
+  const el = document.getElementById("detail");
+  el.innerHTML = `
+    <h2>Maille · ${p.altitude!=null? Math.round(p.altitude)+" m":""}
+      <span class="pill">${geo}</span></h2>
+    <p class="hint">${p.geologie_descr||""}${p.coef_terrain<0.5?" — terrain défavorable au cèpe (calcaire), indice fortement réduit.":""}</p>
+    <div class="metrics">
+      ${metric("Indice cèpe", (p.indice!=null?p.indice:"—")+" · "+p.niveau)}
+      ${metric("Pousse estimée", "~"+p.lag_jours+" j")}
+      ${metric("Humidité sol (SWI)", p.swi!=null?p.swi:"—")}
+      ${metric("Pluie 15 j", p.pluie_15j!=null?p.pluie_15j+" mm":"—")}
+      ${metric("Température", p.temp!=null?p.temp+" °C":"—")}
+      ${metric("Anomalie SWI", p.anomalie_swi!=null?p.anomalie_swi:"—")}
+    </div>
+    <div class="chartwrap"><canvas id="chart"></canvas></div>
+    <p class="hint">Sous-scores (0–1) : humidité ${p.s_humidite ?? "—"} · pluie ${p.s_pluie ?? "—"} · température ${p.s_temp ?? "—"}. L'indice du jour anticipe déjà la pousse à ~${p.lag_jours} jours.</p>
+    <div class="foot" id="foot"></div>`;
+  remplirFoot();
+  const serie = p.serie||[];
+  const ctx = document.getElementById("chart");
+  if(chart) chart.destroy();
+  chart = new Chart(ctx,{
+    data:{
+      labels: serie.map(s=>s.date.slice(5)),
+      datasets:[
+        {type:"line", label:"Indice", data:serie.map(s=>s.indice), yAxisID:"y",
+         borderColor:"#2e7d32", backgroundColor:"rgba(46,125,50,.12)", fill:true, tension:.3, pointRadius:2},
+        {type:"line", label:"Pluie 15j (mm)", data:serie.map(s=>s.pluie_15j), yAxisID:"y2",
+         borderColor:"#1e88e5", borderDash:[4,3], pointRadius:0, tension:.3},
+      ]
+    },
+    options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:"index"},
+      plugins:{legend:{labels:{boxWidth:12,font:{size:10}}}},
+      scales:{
+        y:{min:0,max:100,title:{display:true,text:"indice",font:{size:9}},ticks:{font:{size:9}}},
+        y2:{position:"right",grid:{drawOnChartArea:false},ticks:{font:{size:9}}},
+        x:{ticks:{font:{size:9},maxRotation:0,autoSkip:true,maxTicksLimit:6}}
+      }}
+  });
+}
+
+// Top zones + légende (vue par défaut)
+function remplirDefaut(){
+  const t = document.getElementById("top-zones");
+  if(t && D.top){
+    t.innerHTML = "<h2>Meilleures mailles</h2>" + D.top.map(z=>
+      `<div class="row"><span class="dot" style="background:${couleur(z.indice)}"></span>
+       <b>${z.indice}</b> · ${z.niveau} <span class="pill">${Math.round(z.altitude||0)} m · ${z.geologie}</span></div>`).join("");
+  }
+  const lg = document.getElementById("legend");
+  if(lg){
+    lg.innerHTML = "<b>Légende</b>" + NIVEAUX.map(n=>{
+      const range = n.max===Infinity? "75–100" : (NIVEAUX.indexOf(n)===0?"0–15":"");
+      return `<div class="li"><span class="dot" style="background:${couleur(n.max-1)}"></span>${n.label}</div>`;
+    }).join("") + `<div class="li"><span class="dot" style="background:#9e9e9e"></span>donnée manquante</div>`;
+  }
+}
+function remplirFoot(){
+  const f=document.getElementById("foot");
+  if(f) f.innerHTML =
+    `Généré le ${D.genere_le} · ${D.nb_mailles} mailles de 8 km.<br>
+     Indice indicatif combinant humidité du sol (SWI), pluie sur 15 j et température,
+     pondéré par la géologie. Il ne remplace pas l'observation de terrain ni la
+     prudence sur la comestibilité.<br>
+     Sources : Météo-France/SAFRAN (data.gouv), BRGM, Open-Meteo, IGN.`;
+}
+remplirDefaut();
+remplirFoot();
+</script>
+</body>
+</html>

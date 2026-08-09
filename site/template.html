@@ -37,7 +37,17 @@
   .legend .li{display:flex;align-items:center;gap:8px}
   .foot{margin-top:16px;font-size:11px;color:var(--muted);line-height:1.6;border-top:1px solid var(--line);padding-top:10px}
   .pill{font-size:11px;padding:2px 8px;border-radius:20px;background:#f0efe9;color:var(--muted)}
-  @media(max-width:760px){main{flex-direction:column}aside{width:100%;max-width:none;border-left:none;border-top:1px solid var(--line);max-height:46%}}
+  /* Filtre essences (contrôle superposé à la carte) */
+  .filtre{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:10px;
+    padding:8px 10px;font-size:12px;box-shadow:0 1px 6px rgba(0,0,0,.12);max-width:200px}
+  .filtre-h{display:flex;align-items:center;justify-content:space-between;font-weight:650;margin-bottom:4px}
+  .filtre-h button{border:none;background:none;color:var(--muted);font-size:11px;cursor:pointer;padding:0}
+  .filtre .grp-t{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:6px 0 2px}
+  .filtre label{display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;line-height:1.2}
+  .filtre input{margin:0;cursor:pointer}
+  .filtre .sw{width:12px;height:12px;border-radius:3px;background:#2e7d32;flex:none;border:1px solid rgba(0,0,0,.15)}
+  @media(max-width:760px){main{flex-direction:column}aside{width:100%;max-width:none;border-left:none;border-top:1px solid var(--line);max-height:46%}
+    .filtre{max-width:150px;font-size:11px}}
 </style>
 </head>
 <body>
@@ -101,37 +111,115 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
   {maxZoom:17, attribution:"© OpenStreetMap · Indice : SIM Météo-France, BRGM, Open-Meteo · Forêts : BD Forêt V2 IGN"}).addTo(map);
 
 let chart=null;
-function style(f){
-  return {fillColor:couleur(f.properties.indice), weight:0.5, color:"#3d3d36",
-          fillOpacity:0.72, opacity:0.45};
+const BASE_FILL=0.72;
+// Config des groupes d'essence embarquée par le robot.
+const GRP={}, ESSLBL={};
+(D.essence_groupes||[]).forEach(g=>{GRP[g.key]=g; ESSLBL[g.key]=g.label;});
+const alphaOf = k => (GRP[k] ? GRP[k].alpha : 1);
+
+// Style d'un polygone : couleur = indice de la maille ; opacité = étage de
+// l'essence (les essences principales teintent plus fort que le reste).
+function styleFor(f){
+  const g=f.properties.groupe;
+  return {fillColor:couleur(f.properties.indice), weight:0.4, color:"#3d3d36",
+          fillOpacity:BASE_FILL*(g?alphaOf(g):1), opacity:0.4};
 }
-const layer = L.geoJSON(D.geojson,{
-  style,
-  onEachFeature:(f,l)=>{
-    l.on("click",()=>montrerDetail(f.properties));
-    l.on("mouseover",()=>l.setStyle({weight:2.5,fillOpacity:0.85}));
-    l.on("mouseout",()=>layer.resetStyle(l));
-  }
-}).addTo(map);
-try{ map.fitBounds(layer.getBounds(),{padding:[10,10]}); }catch(e){}
+
+// Une couche Leaflet par groupe d'essence (permet le filtre par cases).
+const parGroupe={};
+(D.geojson.features||[]).forEach(f=>{
+  const g=f.properties.groupe||"__all__";
+  (parGroupe[g]=parGroupe[g]||[]).push(f);
+});
+const layersByGroup={};
+Object.keys(parGroupe).forEach(g=>{
+  const lyr=L.geoJSON({type:"FeatureCollection",features:parGroupe[g]},{
+    style:styleFor,
+    onEachFeature:(f,l)=>{
+      l.on("click",()=>{const p=D.mailles[f.properties.maille_id]; if(p) montrerDetail(p);});
+      l.on("mouseover",()=>l.setStyle({weight:2.2,fillOpacity:0.9}));
+      l.on("mouseout",()=>lyr.resetStyle(l));
+    }
+  });
+  layersByGroup[g]=lyr;
+});
+// Affichage initial : selon "defaut" de chaque groupe (reste décoché).
+// On ajoute les étages faibles d'abord pour que les principales soient au-dessus.
+["reste","secondaire","principale","__all__"].forEach(et=>{
+  Object.keys(layersByGroup).forEach(g=>{
+    const meta=GRP[g]; const etage=meta?meta.etage:"__all__";
+    if(etage!==et) return;
+    if(!meta || meta.defaut) layersByGroup[g].addTo(map);
+  });
+});
+// Cadrage sur l'ensemble des forêts.
+const bnds=L.latLngBounds([]);
+Object.values(layersByGroup).forEach(l=>{try{bnds.extend(l.getBounds());}catch(e){}});
+try{ if(bnds.isValid()) map.fitBounds(bnds,{padding:[10,10]}); }catch(e){}
+
+// --- Contrôle de filtre par essence ---------------------------------------
+if((D.essence_groupes||[]).length){
+  const ctrl=L.control({position:"topright"});
+  ctrl.onAdd=function(){
+    const div=L.DomUtil.create("div","filtre");
+    const etages=[["principale","Principales"],["secondaire","Secondaires"],["reste","Autres"]];
+    let html=`<div class="filtre-h"><span>Essences</span><button id="f-all" type="button">tout</button></div>`;
+    etages.forEach(([et,titre])=>{
+      const gs=D.essence_groupes.filter(g=>g.etage===et);
+      if(!gs.length) return;
+      html+=`<div class="grp-t">${titre}</div>`;
+      gs.forEach(g=>{
+        html+=`<label><input type="checkbox" data-g="${g.key}" ${g.defaut?"checked":""}>`+
+              `<span class="sw" style="opacity:${g.alpha}"></span>${g.label}</label>`;
+      });
+    });
+    div.innerHTML=html;
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+    return div;
+  };
+  ctrl.addTo(map);
+  const toggle=(g,on)=>{const lyr=layersByGroup[g]; if(!lyr) return;
+    if(on) lyr.addTo(map); else map.removeLayer(lyr);};
+  document.querySelectorAll('.filtre input[data-g]').forEach(cb=>{
+    cb.addEventListener("change",()=>toggle(cb.getAttribute("data-g"),cb.checked));
+  });
+  const btn=document.getElementById("f-all");
+  if(btn) btn.addEventListener("click",()=>{
+    const boxes=[...document.querySelectorAll('.filtre input[data-g]')];
+    const allOn=boxes.every(b=>b.checked);
+    boxes.forEach(b=>{b.checked=!allOn; toggle(b.getAttribute("data-g"),b.checked);});
+  });
+}
 
 function metric(k,v){return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;}
+function composition(rep){
+  if(!rep) return "";
+  const ent=Object.entries(rep).filter(([k,v])=>v>0);
+  if(!ent.length) return "";
+  const tot=ent.reduce((s,[,v])=>s+v,0)||1;
+  ent.sort((a,b)=>b[1]-a[1]);
+  const txt=ent.map(([k,v])=>`${ESSLBL[k]||k} ${Math.round(v/tot*100)}%`).join(" · ");
+  return `<p class="hint">Composition boisée : ${txt}.</p>`;
+}
 function montrerDetail(p){
   const geo = {acide:"sol acide", neutre:"sol neutre", calcaire:"sol calcaire", inconnu:"sol ?"}[p.geologie_classe]||p.geologie_classe;
   const el = document.getElementById("detail");
   el.innerHTML = `
     <h2>Maille · ${p.altitude!=null? Math.round(p.altitude)+" m":""}
       <span class="pill">${geo}</span></h2>
-    <p class="hint">${p.geologie_descr||""}${p.coef_geologie!=null&&p.coef_geologie<0.5?" — terrain défavorable au cèpe (calcaire), indice réduit.":""}${p.coef_foret!=null&&p.coef_foret<0.6?" — maille peu boisée, potentiel réduit faute d'arbres hôtes.":""}</p>
+    <p class="hint">${p.geologie_descr||""}${p.coef_geologie!=null&&p.coef_geologie<0.5?" — terrain défavorable au cèpe (calcaire), indice réduit.":""}${p.coef_foret!=null&&p.coef_foret<0.6?" — maille peu boisée, potentiel réduit faute d'arbres hôtes.":""}${p.coef_essence!=null&&p.coef_essence<0.6?" — essences peu favorables au cèpe (hôtes secondaires), indice réduit.":""}</p>
     <div class="metrics">
       ${metric("Indice cèpe", (p.indice!=null?p.indice:"—")+" · "+p.niveau)}
       ${metric("Pousse estimée", "~"+p.lag_jours+" j")}
       ${metric("Boisement", p.taux_boise!=null?Math.round(p.taux_boise*100)+" %":"—")}
+      ${metric("Essence dominante", p.essence_dominante?(ESSLBL[p.essence_dominante]||p.essence_dominante):"—")}
       ${metric("Humidité sol (SWI)", p.swi!=null?p.swi:"—")}
       ${metric("Pluie 15 j", p.pluie_15j!=null?p.pluie_15j+" mm":"—")}
       ${metric("Température", p.temp!=null?p.temp+" °C":"—")}
       ${metric("Anomalie SWI", p.anomalie_swi!=null?p.anomalie_swi:"—")}
     </div>
+    ${composition(p.essence_repartition)}
     <div class="chartwrap"><canvas id="chart"></canvas></div>
     <p class="hint">Sous-scores (0–1) : humidité ${p.s_humidite ?? "—"} · pluie ${p.s_pluie ?? "—"} · température ${p.s_temp ?? "—"}. L'indice du jour anticipe déjà la pousse à ~${p.lag_jours} jours.</p>
     <div class="foot" id="foot"></div>`;
@@ -165,14 +253,15 @@ function remplirDefaut(){
   if(t && D.top){
     t.innerHTML = "<h2>Meilleures mailles</h2>" + D.top.map(z=>
       `<div class="row"><span class="dot" style="background:${couleur(z.indice)}"></span>
-       <b>${z.indice}</b> · ${z.niveau} <span class="pill">${Math.round(z.altitude||0)} m · ${z.geologie}</span></div>`).join("");
+       <b>${z.indice}</b> · ${z.niveau} <span class="pill">${Math.round(z.altitude||0)} m · ${z.geologie}${z.essence?" · "+(ESSLBL[z.essence]||z.essence):""}</span></div>`).join("");
   }
   const lg = document.getElementById("legend");
   if(lg){
     lg.innerHTML = "<b>Légende</b>" + NIVEAUX.map(n=>{
       const range = n.max===Infinity? "75–100" : (NIVEAUX.indexOf(n)===0?"0–15":"");
       return `<div class="li"><span class="dot" style="background:${couleur(n.max-1)}"></span>${n.label}</div>`;
-    }).join("") + `<div class="li"><span class="dot" style="background:#9e9e9e"></span>donnée manquante</div>`;
+    }).join("") + `<div class="li"><span class="dot" style="background:#9e9e9e"></span>donnée manquante</div>`
+    + `<div class="li" style="margin-top:6px">Teinte : essences <b>principales</b> pleines, secondaires atténuées, autres pâles. Filtre en haut à droite de la carte.</div>`;
   }
 }
 function remplirFoot(){
@@ -180,7 +269,7 @@ function remplirFoot(){
   if(f) f.innerHTML =
     `Généré le ${D.genere_le} · ${D.nb_mailles} mailles de 8 km.<br>
      Indice indicatif combinant humidité du sol (SWI), pluie sur 15 j et température,
-     pondéré par la géologie. Il ne remplace pas l'observation de terrain ni la
+     pondéré par la géologie, le boisement et l'essence hôte. Il ne remplace pas l'observation de terrain ni la
      prudence sur la comestibilité.<br>
      Sources : Météo-France/SAFRAN (data.gouv), BRGM, Open-Meteo, IGN.`;
 }

@@ -108,6 +108,61 @@ FORET_COEF_MIN = 0.05
 FORET_SIMPLIFY_TOL = 0.0015
 FORET_COORD_DECIMALES = 5
 
+# --- Essence hôte (BD Forêt V2, champ `essence`) ---------------------------
+# Le cèpe est mycorhizien : l'ESPÈCE d'arbre compte, pas seulement la présence
+# de forêt. On regroupe les valeurs brutes du champ `essence` en groupes qui
+# servent à la fois (a) à pondérer l'indice (poids hôte) et (b) au filtre
+# d'affichage de la carte (cases à cocher). Trois étages :
+#   - principale : hôte nommé de premier ordre du cèpe (case individuelle) ;
+#   - secondaire : forêt hôte PROBABLE mais espèce non précisée par l'IGN
+#                  (« Feuillus / Conifères / Mixte » génériques) — majoritaire
+#                  en Lozère, donc surtout PAS à jeter ;
+#   - reste      : non-hôte ou indéterminé (peuplier, mélèze, landes...).
+#
+# poids : multiplicateur hôte 0..1 injecté dans coef_essence (1 = hôte idéal).
+# alpha : opacité relative sur la carte (dominantes = principales teintent plus).
+# defaut: case cochée à l'ouverture de la carte.
+ESSENCE_GROUPES = {
+    "chene":       {"label": "Chêne",                 "etage": "principale", "poids": 1.00, "alpha": 1.00, "defaut": True},
+    "hetre":       {"label": "Hêtre",                 "etage": "principale", "poids": 1.00, "alpha": 1.00, "defaut": True},
+    "chataignier": {"label": "Châtaignier",           "etage": "principale", "poids": 1.00, "alpha": 1.00, "defaut": True},
+    "epicea":      {"label": "Épicéa / sapin",        "etage": "principale", "poids": 0.95, "alpha": 1.00, "defaut": True},
+    "pin":         {"label": "Pin",                   "etage": "principale", "poids": 0.90, "alpha": 1.00, "defaut": True},
+    "feuillus":    {"label": "Feuillus indéterminés", "etage": "secondaire", "poids": 0.85, "alpha": 0.62, "defaut": True},
+    "coniferes":   {"label": "Conifères indéterminés","etage": "secondaire", "poids": 0.85, "alpha": 0.62, "defaut": True},
+    "mixte":       {"label": "Forêt mixte",           "etage": "secondaire", "poids": 0.85, "alpha": 0.62, "defaut": True},
+    "reste":       {"label": "Autres / non hôtes",    "etage": "reste",      "poids": 0.20, "alpha": 0.32, "defaut": False},
+}
+
+# Ordre d'affichage des cases à cocher (principales d'abord, reste en dernier).
+ESSENCE_ORDRE = ["chene", "hetre", "chataignier", "epicea", "pin",
+                 "feuillus", "coniferes", "mixte", "reste"]
+
+# Valeur brute `essence` (BD Forêt V2) -> clé de groupe. Comparaison en
+# minuscules et sans accent. Toute valeur absente tombe dans "reste"
+# (peuplier, mélèze, robinier, NC, NR, None...).
+ESSENCE_VERS_GROUPE = {
+    "chenes decidus": "chene", "chenes sempervirents": "chene",
+    "chene vert": "chene", "chene pubescent": "chene", "chene": "chene",
+    "chenes": "chene",
+    "hetre": "hetre",
+    "chataignier": "chataignier",
+    "sapin, epicea": "epicea", "epicea": "epicea", "sapin": "epicea",
+    "douglas": "epicea",
+    "pin sylvestre": "pin", "pin laricio, pin noir": "pin",
+    "pins melanges": "pin", "pin a crochets, pin cembro": "pin",
+    "pin maritime": "pin", "pin d'alep": "pin",
+    "pin d'alep, pin parasol": "pin", "pins": "pin",
+    "feuillus": "feuillus",
+    "coniferes": "coniferes",
+    "mixte": "mixte", "melanges": "mixte",
+    "peuplier": "reste", "meleze": "reste", "robinier": "reste",
+}
+
+# Plancher du coef essence : la donnée d'essence est imparfaite (générique,
+# lisières...), on ne met jamais une maille tout à fait à zéro par l'essence.
+ESSENCE_COEF_MIN = 0.15
+
 # --- Paramètres de l'indice cèpe -------------------------------------------
 # L'indice combine humidité du sol, pluie récente et température, sur 0-100.
 # Ces seuils sont un point de départ raisonnable, à recaler avec le terrain.

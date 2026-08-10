@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Champipi — Comment on juge une zone à cèpes</title>
+<style>
+  :root{
+    --n0:#9e9e9e; --n1:#b71c1c; --n2:#ef6c00; --n3:#f9a825; --n4:#7cb342; --n5:#2e7d32;
+    --bg:#f5f4f0; --panel:#ffffff; --ink:#2b2b28; --muted:#6b6b63; --line:#e2e0da;
+    --green:#2e7d32; --greenbg:#eef5ee; --greenln:#cfe3cf;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6}
+  .wrap{max-width:820px;margin:0 auto;padding:0 20px 80px}
+  header{background:var(--panel);border-bottom:1px solid var(--line);padding:26px 20px}
+  header .in{max-width:820px;margin:0 auto}
+  header h1{margin:0;font-size:26px;font-weight:680;letter-spacing:-.01em}
+  header h1 .m{opacity:.5;font-weight:400}
+  header p{margin:8px 0 0;color:var(--muted);font-size:15px}
+  h2{font-size:20px;font-weight:660;margin:44px 0 6px;letter-spacing:-.01em}
+  h2 .num{color:var(--green);font-weight:700;margin-right:8px}
+  h3{font-size:16px;font-weight:640;margin:22px 0 4px}
+  p{margin:10px 0}
+  .lead{font-size:17px}
+  strong{font-weight:640}
+  .muted{color:var(--muted)}
+  .sub{color:var(--muted);font-size:14px;margin-top:2px}
+  hr{border:none;border-top:1px solid var(--line);margin:8px 0}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:16px 0}
+  .note{background:var(--greenbg);border:1px solid var(--greenln);border-radius:12px;padding:12px 16px;margin:16px 0;font-size:14.5px}
+  .note b{color:#1b5e20}
+  .warn{background:#fdf3e7;border:1px solid #f0d6ac;border-radius:12px;padding:12px 16px;margin:16px 0;font-size:14.5px}
+  .warn b{color:#b45309}
+
+  /* échelle 6 couleurs */
+  .scale{display:flex;border-radius:9px;overflow:hidden;border:1px solid var(--line);margin:6px 0 2px}
+  .scale div{flex:1;height:30px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;font-weight:600}
+  .scale .z0{background:var(--n0)} .scale .z1{background:var(--n1)} .scale .z2{background:var(--n2)}
+  .scale .z3{background:var(--n3);color:#3a2b00} .scale .z4{background:var(--n4)} .scale .z5{background:var(--n5)}
+  .scale-legend{display:flex;justify-content:space-between;font-size:11.5px;color:var(--muted)}
+
+  /* deux familles */
+  .fam{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+  .fam .col{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .fam .col h3{margin-top:0}
+  .tag{display:inline-block;font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.04em;padding:3px 9px;border-radius:20px;margin-bottom:6px}
+  .tag.fixe{background:#e8eef5;color:#1f4e79}
+  .tag.var{background:#eef5ee;color:#1b5e20}
+  ul.clean{margin:8px 0 0;padding-left:18px}
+  ul.clean li{margin:5px 0}
+
+  /* facteurs météo poids */
+  .bar{display:flex;align-items:center;gap:10px;margin:9px 0}
+  .bar .lbl{width:150px;font-size:14px;flex:none}
+  .bar .track{flex:1;background:#efeee8;border-radius:6px;height:16px;overflow:hidden}
+  .bar .fill{height:100%;border-radius:6px}
+  .bar .pct{width:44px;text-align:right;font-variant-numeric:tabular-nums;font-size:13px;color:var(--muted);flex:none}
+
+  /* timeline lag */
+  .tl{position:relative;margin:20px 0 6px;padding-top:4px}
+  .tl-line{height:4px;background:linear-gradient(90deg,var(--n1),var(--n3),var(--n5));border-radius:4px}
+  .tl-pts{display:flex;justify-content:space-between;margin-top:8px}
+  .tl-pt{flex:1;text-align:center;font-size:12px;position:relative}
+  .tl-pt .d{font-weight:660;font-size:13px}
+  .tl-pt .t{color:var(--muted)}
+  .tl-pt::before{content:"";position:absolute;top:-14px;left:50%;transform:translateX(-50%);width:11px;height:11px;border-radius:50%;background:var(--green);border:2px solid var(--panel);box-shadow:0 0 0 1px var(--line)}
+
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:600}
+  td.ok{color:var(--n5);font-weight:600} td.no{color:var(--n1);font-weight:600}
+
+  .toc{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:22px 0;font-size:14.5px}
+  .toc b{display:block;margin-bottom:6px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+  .toc a{color:var(--ink);text-decoration:none;display:block;padding:3px 0;border-bottom:1px dashed var(--line)}
+  .toc a:last-child{border-bottom:none}
+  .toc a:hover{color:var(--green)}
+  .toc .n{color:var(--green);font-weight:700;margin-right:8px}
+
+  .foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted);line-height:1.7}
+  @media(max-width:640px){ .fam{grid-template-columns:1fr} .bar .lbl{width:110px;font-size:13px} header h1{font-size:22px} }
+</style>
+</head>
+<body>
+<header>
+  <div class="in">
+    <h1>Champipi <span class="m">— comment on juge si une zone vaut le coup pour les cèpes</span></h1>
+    <p>Le raisonnement derrière la carte, expliqué simplement : sur quelles bases une case passe du gris au vert foncé.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <p class="lead">Chercher un cèpe, c'est répondre à deux questions séparées : <strong>« l'endroit est-il fait pour ça&nbsp;? »</strong> (ça ne change quasiment jamais) et <strong>« est-ce le bon moment&nbsp;? »</strong> (ça change chaque semaine avec la météo). Champipi calcule les deux, les multiplie, et vous ressort une couleur. Voici la logique.</p>
+
+  <div class="toc">
+    <b>Au sommaire</b>
+    <a href="#bio"><span class="n">1</span>Le point de départ : le champignon ne « pousse » pas quand vous croyez</a>
+    <a href="#deux"><span class="n">2</span>Deux familles de facteurs : le lieu et le moment</a>
+    <a href="#lieu"><span class="n">3</span>Le lieu — ce qui est gravé dans le terrain</a>
+    <a href="#moment"><span class="n">4</span>Le moment — la fenêtre météo</a>
+    <a href="#lag"><span class="n">5</span>Le décalage : la carte d'aujourd'hui parle de dans 10 jours</a>
+    <a href="#combine"><span class="n">6</span>Comment tout se combine en une note</a>
+    <a href="#versant"><span class="n">7</span>Le versant : le correcteur qui change de signe</a>
+    <a href="#idees"><span class="n">8</span>Idées reçues &amp; garde-fous</a>
+  </div>
+
+  <h2 id="bio"><span class="num">1</span>Le point de départ</h2>
+  <p>Ce qu'on ramasse — le « champignon » avec son chapeau et son pied — n'est que le <strong>fruit</strong> d'un organisme (le <em>sporophore</em>). L'organisme lui-même, le <strong>mycélium</strong>, vit dans le sol toute l'année, invisible, en réseau. Il ne fabrique un fruit que lorsque trois choses coïncident&nbsp;:</p>
+  <div class="card">
+    <p style="margin-top:0"><strong>La « recette » de la fructification&nbsp;:</strong></p>
+    <p style="margin:6px 0">💧 assez d'<strong>eau dans le sol</strong> &nbsp;+&nbsp; 🌡️ une <strong>température</strong> dans la bonne fenêtre &nbsp;+&nbsp; ⚡ souvent un <strong>« choc »</strong>, qui peut être <strong>hydrique</strong> (une bonne pluie après le sec) <strong>ou thermique</strong> (une chute de température, les premières nuits fraîches d'arrière-saison).</p>
+    <p class="sub" style="margin-bottom:0">Retenez surtout ceci : la pluie d'hier ne sert à rien seule. Ce qui compte, c'est l'<strong>état d'humidité accumulé</strong> dans le sol, et une bascule qui réveille le mycélium.</p>
+  </div>
+  <p>Autre point structurant : le cèpe est <strong>mycorhizien obligatoire</strong>. Il ne peut vivre qu'en symbiose avec les racines de certains arbres (chênes, hêtres, châtaigniers, épicéas, pins). <strong>Pas d'arbre hôte → jamais de cèpe</strong>, même avec une météo parfaite. C'est pour ça que le terrain pèse autant que le ciel.</p>
+
+  <h2 id="deux"><span class="num">2</span>Deux familles de facteurs</h2>
+  <p>Tout ce qui suit se range dans deux colonnes. La première décrit un lieu une fois pour toutes&nbsp;; la seconde se recalcule chaque jour.</p>
+  <div class="fam">
+    <div class="col">
+      <span class="tag fixe">Le lieu — quasi fixe</span>
+      <h3>Est-ce un endroit à cèpes&nbsp;?</h3>
+      <ul class="clean">
+        <li><strong>Sol acide</strong> (granite, schiste, basalte…) vs calcaire</li>
+        <li><strong>Un arbre hôte</strong> (chêne, hêtre, châtaignier, épicéa, pin)</li>
+        <li><strong>C'est boisé</strong> et pas une lande nue</li>
+        <li><strong>Altitude</strong> (décale le calendrier)</li>
+        <li><strong>Versant / exposition</strong> (nord frais vs sud sec)</li>
+      </ul>
+    </div>
+    <div class="col">
+      <span class="tag var">Le moment — change chaque semaine</span>
+      <h3>Est-ce le bon moment&nbsp;?</h3>
+      <ul class="clean">
+        <li><strong>Humidité du sol</strong> accumulée (la variable reine)</li>
+        <li><strong>Cumul de pluie</strong> sur ~15 jours</li>
+        <li><strong>Température</strong> moyenne récente</li>
+        <li>Le <strong>« choc »</strong> pluie-après-sécheresse</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note"><b>La règle d'or&nbsp;:</b> un excellent moment sur un mauvais lieu ne donne rien, et un lieu parfait resté sec ne donne rien non plus. Les deux notes se <b>multiplient</b> — si l'une est à zéro, le total est à zéro.</div>
+
+  <h2 id="lieu"><span class="num">3</span>Le lieu — ce qui est gravé dans le terrain</h2>
+
+  <h3>La géologie&nbsp;: acide ou calcaire</h3>
+  <p>Le cèpe aime les sols <strong>acides</strong> (pH ~4,5 à 6,5), bien drainés. En Lozère c'est déterminant&nbsp;: les massifs cristallins — <strong>Aubrac, Margeride, Mont Lozère, Cévennes</strong> (granites, schistes, basaltes) — sont favorables&nbsp;; les grands <strong>Causses calcaires</strong> (Méjean, Sauveterre, secteur de Mende) sont défavorables. Champipi lit la carte géologique du BRGM et applique un coefficient franc&nbsp;: calcaire ≈ 0,15, acide ≈ 1.</p>
+
+  <h3>L'arbre hôte&nbsp;: la mycorhize</h3>
+  <p>Sans hôte, rien. Champipi lit l'inventaire forestier (BD Forêt) et regarde l'<strong>essence</strong>&nbsp;: chêne, hêtre, châtaignier, épicéa/sapin, pin comptent plein pot&nbsp;; les forêts « feuillus / conifères / mixtes » génériques (majoritaires en Lozère) comptent presque autant&nbsp;; peupleraies, mélèzes et landes sont écartés.</p>
+
+  <h3>Le boisement&nbsp;: encore faut-il des arbres</h3>
+  <p>Un plateau acide mais <strong>nu</strong> (pelouse d'estive) reste stérile. Un filtre « taux boisé » ramène ces cases quasi à zéro — il corrige un angle mort de la géologie (les plateaux acides sans arbres d'Aubrac ou de Margeride).</p>
+
+  <h3>L'altitude&nbsp;: elle décale le calendrier</h3>
+  <p>Des gorges (~600&nbsp;m) au Mont Lozère (~1&nbsp;700&nbsp;m), la saison <strong>démarre plus bas d'abord</strong> puis remonte. L'altitude ne rend pas un lieu meilleur ou pire dans l'absolu&nbsp;; elle déplace le moment où la fenêtre s'ouvre, et allonge le décalage (voir §5).</p>
+
+  <h2 id="moment"><span class="num">4</span>Le moment — la fenêtre météo</h2>
+  <p>Trois variables, par ordre d'importance dans le calcul&nbsp;:</p>
+
+  <h3>1. L'humidité du sol (SWI) — la reine</h3>
+  <p>Le <strong>SWI</strong> (indice d'humidité des sols, fourni par la réanalyse SAFRAN de Météo-France) mesure l'eau réellement stockée dans le sol. Il est bien plus prédictif que la pluie brute, parce qu'il intègre déjà ce qui s'est infiltré, évaporé et ce qui reste disponible. En dessous d'un seuil (~0,30) on ne compte quasiment rien&nbsp;; l'optimum se situe vers 0,65 (autour de 70&nbsp;% d'humidité).</p>
+
+  <h3>2. Le cumul de pluie sur ~15 jours</h3>
+  <p>Pas la pluie du jour, mais ce qui est tombé sur la quinzaine — c'est le <strong>déclencheur</strong> qui recharge le sol. Ordre de grandeur&nbsp;: à partir de ~20&nbsp;mm ça commence à jouer, un bon épisode tourne autour de 60&nbsp;mm.</p>
+
+  <h3>3. La température moyenne récente</h3>
+  <p>Fenêtre confortable ~12–20&nbsp;°C, avec des <strong>nuits douces</strong> (&gt;10–12&nbsp;°C). En dessous de 8&nbsp;°C ou au-dessus de ~27&nbsp;°C, la fructification cale.</p>
+
+  <table>
+    <tr><th>Variable</th><th>Rien</th><th>Optimal</th></tr>
+    <tr><td>Humidité sol (SWI)</td><td class="no">&lt; 0,30</td><td class="ok">~0,65</td></tr>
+    <tr><td>Pluie cumulée 15&nbsp;j</td><td class="no">&lt; 20&nbsp;mm</td><td class="ok">~60&nbsp;mm</td></tr>
+    <tr><td>Température moyenne</td><td class="no">&lt;8 ou &gt;27&nbsp;°C</td><td class="ok">12–20&nbsp;°C</td></tr>
+  </table>
+
+  <div class="note"><b>Le « choc », deux formes&nbsp;:</b> <b>hydrique</b> — une série de pluies qui arrive <b>après</b> une période chaude et sèche (bascule sec → humide)&nbsp;; et <b>thermique</b> — une <b>chute nette de température</b>, typiquement les premières nuits fraîches de fin d'été. Les deux réveillent le mycélium, et se cumulent souvent (un orage qui casse la chaleur d'août fait les deux à la fois). C'est le scénario déclencheur classique du cèpe d'automne.</div>
+
+  <h3>Le choc thermique dans le calcul&nbsp;: le delta de température</h3>
+  <p>En plus du <em>niveau</em> de température (la cloche 12–20&nbsp;°C), Champipi mesure sa <strong>variation récente</strong>. Il compare la moyenne des <strong>4 derniers jours</strong> à celle des <strong>7 jours précédents</strong>&nbsp;: si ça s'est <strong>refroidi</strong> (delta &gt; 0), c'est favorable&nbsp;; si ça s'est réchauffé, c'est défavorable. Ce refroidissement module l'indice de la maille, jusqu'à <strong>±20&nbsp;%</strong> environ.</p>
+  <div class="bar"><div class="lbl">Zone morte</div><div class="track"><div class="fill" style="width:33%;background:var(--n0)"></div></div><div class="pct">&lt;2&nbsp;°C</div></div>
+  <div class="bar"><div class="lbl">Montée en effet</div><div class="track"><div class="fill" style="width:66%;background:var(--n3)"></div></div><div class="pct">2→6&nbsp;°C</div></div>
+  <div class="bar"><div class="lbl">Effet plein</div><div class="track"><div class="fill" style="width:100%;background:var(--n5)"></div></div><div class="pct">&gt;6&nbsp;°C</div></div>
+  <p class="muted" style="font-size:14px;margin-top:8px">Deux garde-fous importants&nbsp;: (1) le bonus n'est accordé que si le refroidissement <strong>aboutit dans une plage vivable</strong> — un plongeon vers le gel n'est pas un déclencheur&nbsp;; (2) l'effet est <strong>multiplicatif</strong>, donc un coup de froid sur un sol sec (indice déjà ~0) ne fabrique rien. Le choc <strong>affine</strong>, il ne pilote pas. Le côté « réchauffement » pénalise plus doucement (±10&nbsp;%) pour ne pas compter deux fois la température.</p>
+
+  <h2 id="lag"><span class="num">5</span>Le décalage&nbsp;: la carte d'aujourd'hui parle de dans 10 jours</h2>
+  <p>C'est le point le plus contre-intuitif, et le cœur d'une <em>prévision</em>. Entre la pluie déclenchante et le champignon sorti de terre, il s'écoule un délai&nbsp;: environ <strong>10 jours en plaine, 12 à 15 en altitude</strong> (où les écarts jour/nuit ralentissent tout).</p>
+  <div class="tl">
+    <div class="tl-line"></div>
+    <div class="tl-pts">
+      <div class="tl-pt"><div class="d">Jour 0</div><div class="t">bonne pluie après le sec</div></div>
+      <div class="tl-pt"><div class="d">Jours 3–7</div><div class="t">le sol se recharge, le mycélium démarre</div></div>
+      <div class="tl-pt"><div class="d">Jours 10–15</div><div class="t">les cèpes sont sortis</div></div>
+    </div>
+  </div>
+  <p class="muted" style="font-size:14px">Conséquence pratique&nbsp;: quand l'indice du jour est haut, il annonce une pousse à venir sous une dizaine de jours. La carte n'est pas une photo de l'instant, c'est une anticipation.</p>
+
+  <h2 id="combine"><span class="num">6</span>Comment tout se combine en une note</h2>
+  <p>Champipi calcule d'abord une <strong>note météo</strong> (0 à 100) en pondérant les trois variables, puis la <strong>multiplie</strong> par les coefficients du terrain.</p>
+
+  <p><strong>Pondération de la note météo&nbsp;:</strong></p>
+  <div class="bar"><div class="lbl">Humidité du sol</div><div class="track"><div class="fill" style="width:50%;background:var(--n5)"></div></div><div class="pct">50&nbsp;%</div></div>
+  <div class="bar"><div class="lbl">Pluie 15&nbsp;jours</div><div class="track"><div class="fill" style="width:30%;background:var(--n4)"></div></div><div class="pct">30&nbsp;%</div></div>
+  <div class="bar"><div class="lbl">Température</div><div class="track"><div class="fill" style="width:20%;background:var(--n3)"></div></div><div class="pct">20&nbsp;%</div></div>
+
+  <p style="margin-top:18px"><strong>Puis multiplication par le terrain&nbsp;:</strong></p>
+  <div class="card" style="text-align:center;font-size:15px">
+    note finale = <b style="color:var(--n5)">note météo</b> × <b style="color:#1f4e79">géologie</b> × <b style="color:#1f4e79">forêt</b> × <b style="color:#1f4e79">essence</b>
+    <span class="sub" style="display:block;margin-top:8px">puis modulée par deux correcteurs dynamiques&nbsp;: le <b>choc thermique</b> (§4) et le <b>versant</b> (§7)</span>
+  </div>
+  <p>Le résultat colore la case selon une <strong>échelle à 6 niveaux</strong> (le même principe de zonage que vos zones Coros)&nbsp;:</p>
+  <div class="scale">
+    <div class="z0">nul</div><div class="z1">très faible</div><div class="z2">faible</div><div class="z3">moyen</div><div class="z4">bon</div><div class="z5">excellent</div>
+  </div>
+  <div class="scale-legend"><span>on reste chez soi</span><span>ça vaut le déplacement</span></div>
+
+  <h2 id="versant"><span class="num">7</span>Le versant&nbsp;: le correcteur qui change de signe</h2>
+  <p>À météo et terrain identiques, un versant <strong>nord (ubac)</strong> reste frais et humide, un versant <strong>sud (adret)</strong> chauffe et sèche. Mais — et c'est la subtilité — ce n'est <strong>pas</strong> un bonus fixe comme la géologie&nbsp;: son signe s'inverse selon la période.</p>
+  <div class="fam">
+    <div class="col"><h3 style="margin-top:0">☀️ Période chaude et sèche</h3><p class="sub" style="margin:0">On cherche la fraîcheur → l'<strong>ubac (nord)</strong> est favorisé. Il garde l'eau que l'adret a perdue.</p></div>
+    <div class="col"><h3 style="margin-top:0">❄️ Période froide</h3><p class="sub" style="margin:0">On cherche la chaleur → l'<strong>adret (sud)</strong> reprend l'avantage, il reste dans la bonne fenêtre de température.</p></div>
+  </div>
+  <p>Champipi mesure l'orientation de chaque pente (à partir d'un modèle d'altitude), estime le stress hydro-thermique du jour, et module la note en conséquence. <strong>L'effet dépend du relief</strong>&nbsp;: presque négligeable sur les plateaux mous (Aubrac, Margeride), il devient nettement marqué dans les reliefs disséqués (gorges des Cévennes), où l'écart ubac/adret peut atteindre plusieurs dizaines de pourcents.</p>
+  <p class="muted" style="font-size:14px">Signe que le modèle voit juste&nbsp;: sans qu'on le lui dise, il retrouve que le <strong>hêtre</strong> est l'essence la plus « nord » de toutes — ce qui colle à la réalité, le hêtre fuyant l'adret sec.</p>
+
+  <h2 id="idees"><span class="num">8</span>Idées reçues &amp; garde-fous</h2>
+  <div class="warn"><b>La lune.</b> Très présente dans le folklore de la cueillette, mais <b>aucune preuve scientifique</b> d'un effet sur la fructification. Champipi ne l'utilise pas comme variable — l'eau du sol, la température et le décalage suffisent à expliquer l'essentiel.</div>
+  <div class="warn"><b>Comestibilité.</b> L'indice dit « où et quand chercher », <b>jamais</b> si un champignon est mangeable. Toute cueillette exige une identification sûre, au besoin auprès d'un pharmacien ou d'une société mycologique. En cas de doute, on ne consomme pas.</div>
+  <p class="muted" style="font-size:14px">Enfin, tous les seuils cités sont des <strong>points de départ</strong>, à recaler avec vos observations de terrain. Un coin que vous connaissez qui produit toujours, ou jamais, en dit plus long que n'importe quel modèle — c'est justement ce retour terrain qui permet d'affiner les curseurs (le poids du versant, notamment).</p>
+
+  <div class="foot">
+    Champipi — modèle indicatif d'aide à la décision, sur données ouvertes (SAFRAN / Météo-France pour l'humidité et la pluie, Open-Meteo pour la température, BRGM pour la géologie, IGN BD Forêt pour le boisement et les essences, modèle d'altitude IGN pour le versant). Ne remplace ni la connaissance du terrain, ni l'identification des espèces.
+  </div>
+
+</div>
+</body>
+</html>

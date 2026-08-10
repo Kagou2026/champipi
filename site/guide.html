@@ -116,7 +116,8 @@
     <a href="#combine"><span class="n">6</span>Comment tout se combine en une note</a>
     <a href="#versant"><span class="n">7</span>Le versant : le correcteur qui change de signe</a>
     <a href="#idees"><span class="n">8</span>Idées reçues &amp; garde-fous</a>
-    <a href="#panneau"><span class="n">9</span>Lire le panneau : ce que veut dire chaque valeur affichée</a>
+    <a href="#lune"><span class="n">9</span>La lune : un clin d'œil au folklore, testé et encadré</a>
+    <a href="#panneau"><span class="n">10</span>Lire le panneau : ce que veut dire chaque valeur affichée</a>
   </div>
 
   <h2 id="bio"><span class="num">1</span>Le point de départ</h2>
@@ -238,11 +239,41 @@
   <p class="muted" style="font-size:14px">Signe que le modèle voit juste&nbsp;: sans qu'on le lui dise, il retrouve que le <strong>hêtre</strong> est l'essence la plus « nord » de toutes — ce qui colle à la réalité, le hêtre fuyant l'adret sec.</p>
 
   <h2 id="idees"><span class="num">8</span>Idées reçues &amp; garde-fous</h2>
-  <div class="warn"><b>La lune.</b> Très présente dans le folklore de la cueillette, mais <b>aucune preuve scientifique</b> d'un effet sur la fructification. Champipi ne l'utilise pas comme variable — l'eau du sol, la température et le décalage suffisent à expliquer l'essentiel.</div>
+  <div class="warn"><b>La lune.</b> Très présente dans le folklore de la cueillette, mais les <b>preuves scientifiques d'un effet réel restent très faibles</b> — l'eau du sol, la température et le décalage suffisent à expliquer l'essentiel. Champipi l'affiche et lui accorde un <b>bonus volontairement minime</b>, séparé de la note météo. Le chapitre suivant (§9) explique pourquoi, comment il est encadré, et surtout comment on compte le <b>tester</b> plutôt que d'y croire sur parole.</div>
   <div class="warn"><b>Comestibilité.</b> L'indice dit « où et quand chercher », <b>jamais</b> si un champignon est mangeable. Toute cueillette exige une identification sûre, au besoin auprès d'un pharmacien ou d'une société mycologique. En cas de doute, on ne consomme pas.</div>
   <p class="muted" style="font-size:14px">Enfin, tous les seuils cités sont des <strong>points de départ</strong>, à recaler avec vos observations de terrain. Un coin que vous connaissez qui produit toujours, ou jamais, en dit plus long que n'importe quel modèle — c'est justement ce retour terrain qui permet d'affiner les curseurs (le poids du versant, notamment).</p>
 
-  <h2 id="panneau"><span class="num">9</span>Lire le panneau&nbsp;: ce que veut dire chaque valeur affichée</h2>
+  <h2 id="lune"><span class="num">9</span>La lune&nbsp;: un clin d'œil au folklore, testé et encadré</h2>
+  <p>«&nbsp;Ça pousse à la pleine lune&nbsp;»&nbsp;: la croyance est tenace chez les ramasseurs. Soyons honnêtes — <strong>les études ne trouvent pas d'effet robuste</strong> de la phase lunaire sur la fructification, et les mécanismes avancés tiennent mal&nbsp;:</p>
+  <ul class="clean">
+    <li><strong>La lumière lunaire</strong> n'a aucune raison d'agir&nbsp;: le champignon ne photosynthétise pas, et le mycélium vit sous terre.</li>
+    <li><strong>L'effet de marée</strong> sur les nappes existe, mais son amplitude à l'intérieur des terres est minuscule face à une pluie de 20&nbsp;mm.</li>
+    <li>Les corrélations observées sont souvent des <strong>confusions</strong>&nbsp;: on ramasse plus les matins clairs de pleine lune parce qu'on <em>voit</em> mieux, ou parce qu'un ciel dégagé apporte rosée et fraîcheur nocturne — mais c'est la couverture nuageuse qui compte, pas la lune.</li>
+  </ul>
+  <p>Alors pourquoi l'avoir ajoutée&nbsp;? Pour trois raisons, à condition de la traiter avec prudence&nbsp;:</p>
+  <div class="card">
+    <p style="margin-top:0"><strong>1. C'est gratuit et hors-ligne.</strong> La phase se calcule par pure astronomie, sans donnée externe ni risque pour le reste du modèle.</p>
+    <p><strong>2. C'est culturellement attendu.</strong> Beaucoup de cueilleurs veulent voir cette information&nbsp;; l'afficher clairement, à part, est plus honnête que de l'ignorer.</p>
+    <p style="margin-bottom:0"><strong>3. Surtout&nbsp;: c'est testable.</strong> Plutôt que de croire ou de rejeter, autant enregistrer la donnée et laisser vos cueillettes trancher.</p>
+  </div>
+
+  <h3>Ce que Champipi fait exactement</h3>
+  <p>Un bonus <strong>volontairement minime</strong>, calé sur la croyance et rendu totalement transparent&nbsp;:</p>
+  <ul class="clean">
+    <li><strong>Uniquement en lune montante</strong>, de 0 (nouvelle lune) jusqu'à un maximum à la <strong>pleine lune</strong>&nbsp;; aucune pénalité en lune descendante.</li>
+    <li>Plafonné à <strong>+3&nbsp;%</strong> de l'indice — de quoi faire passer une note de 60 à 62, pas davantage.</li>
+    <li>Calculé sur la <strong>nuit précédant</strong> le jour affiché (si la lune joue, c'est via la nuit, pas via midi).</li>
+    <li><strong>Global</strong>&nbsp;: comme il s'applique de façon identique à toutes les mailles d'une même date, il décale le niveau absolu mais <strong>ne change pas le classement</strong> des coins. La lune ne réorganise jamais vos spots.</li>
+    <li><strong>Débranchable</strong> d'un seul réglage&nbsp;: on peut le remettre à zéro à tout moment sans toucher au reste.</li>
+  </ul>
+  <p style="text-align:center;font-size:26px;letter-spacing:8px;margin:16px 0 2px">🌑&nbsp;&nbsp;🌒&nbsp;&nbsp;🌓&nbsp;&nbsp;🌔&nbsp;&nbsp;🌕</p>
+  <div class="scale-legend"><span>nouvelle lune · bonus 0</span><span>lune montante&nbsp;→</span><span>pleine lune · bonus max +3&nbsp;%</span></div>
+  <div class="note"><b>Un encadré dédié</b> affiche la phase du jour (emoji, nom, pourcentage illuminé, lune montante ou descendante, et le bonus appliqué), bien séparé de la note météo pour qu'on ne confonde jamais une tradition avec un facteur causal fort.</div>
+
+  <h3>L'idée qui compte vraiment&nbsp;: la tester</h3>
+  <p>À chaque cueillette que vous notez, Champipi <strong>enregistre l'illumination de la lune</strong> de la nuit précédente. Avec assez de sorties, on pourra <strong>corréler vos résultats réels</strong> (0 à 10) à la phase lunaire, sur <em>vos</em> coins de Lozère, et trancher sur pièces. Une croyance devient alors une <strong>hypothèse vérifiable</strong> — c'est la seule façon sérieuse de savoir si, ici, la lune dit vraiment quelque chose.</p>
+
+  <h2 id="panneau"><span class="num">10</span>Lire le panneau&nbsp;: ce que veut dire chaque valeur affichée</h2>
   <p>Sur la carte, avant de cliquer, le volet montre déjà deux repères d'ensemble&nbsp;:</p>
   <div class="gloss">
     <div class="row"><div class="lab"><div class="k">Moyenne 48</div><div class="v">48 <small>/ 100</small></div></div><p class="txt">L'indice <b>moyen du département 48</b> (la Lozère) ce jour. Le «&nbsp;48&nbsp;» est le numéro du département, pas la note&nbsp;: donne le contexte général (saison lancée ou non).</p></div>

@@ -195,6 +195,7 @@
           <div class="metric"><div class="k">Moyenne 48</div><div class="v" id="m-moy">—</div></div>
           <div class="metric"><div class="k">Meilleure maille</div><div class="v" id="m-best">—</div></div>
         </div>
+        <div id="lune-box"></div>
         <div class="synth" id="prev-synth"></div>
         <div class="top" id="top-zones"></div>
         <div class="legend" id="legend"></div>
@@ -302,6 +303,65 @@ function chocHTML(R, temp){
      (moyenne ${CH.recent} j récents vs ${CH.ref} j avant) → indice <b>${eff>0?"+":""}${eff}%</b>
      (${fav?"favorable, déclencheur de pousse":"défavorable"}).</p>`;
 }
+// --- Phase de lune : léger bonus en lune MONTANTE, maximal à la pleine lune ----
+// Facteur culturel/traditionnel, appliqué comme couche globale par-dessus la
+// météo (il ne change PAS le classement des mailles, seulement le niveau absolu).
+// Basé sur la nuit précédant le jour affiché. Mets POIDS_LUNE=0 pour désactiver.
+const POIDS_LUNE = 0.03;          // bonus max (+3 %) atteint à la pleine lune.
+const SYNODIQUE  = 29.53058867;   // durée moyenne d'une lunaison (jours).
+// Âge de la lune (jours depuis la dernière nouvelle lune) pour 'YYYY-MM-DD' 00h UTC.
+function ageLune(dateStr){
+  const [Y,M,D2]=dateStr.split("-").map(Number);
+  const jd = Date.UTC(Y, M-1, D2)/86400000 + 2440587.5;   // jour julien
+  let age = (jd - 2451550.1) % SYNODIQUE;                  // réf. nouvelle lune 2000-01-06
+  if(age<0) age += SYNODIQUE;
+  return age;
+}
+// Phase de la NUIT PRÉCÉDANT dateStr : {illum 0..1, montante, nom, emoji}.
+function phaseLune(dateStr){
+  const [Y,M,D2]=dateStr.split("-").map(Number);
+  const veille = new Date(Date.UTC(Y, M-1, D2-1)).toISOString().slice(0,10);
+  const p = ageLune(veille)/SYNODIQUE;                     // 0=nouvelle, .5=pleine
+  const illum = (1-Math.cos(2*Math.PI*p))/2;
+  const noms = [["🌑","Nouvelle lune"],["🌒","Premier croissant"],["🌓","Premier quartier"],
+    ["🌔","Gibbeuse croissante"],["🌕","Pleine lune"],["🌖","Gibbeuse décroissante"],
+    ["🌗","Dernier quartier"],["🌘","Dernier croissant"]];
+  const [emoji,nom] = noms[Math.round(p*8)%8];
+  return {illum, montante:(p<0.5), nom, emoji};
+}
+// Facteur multiplicatif (>=1) de l'indice : bonus seulement en lune montante.
+function facteurLune(dateStr){
+  if(!POIDS_LUNE || !dateStr) return 1;
+  const ph = phaseLune(dateStr);
+  return 1 + (ph.montante ? POIDS_LUNE*ph.illum : 0);
+}
+// Applique le bonus lune à un indice (arrondi, clampé 0..100). null -> null.
+function avecLune(indice, dateStr){
+  if(indice==null) return indice;
+  return Math.round(Math.min(100, indice*facteurLune(dateStr)));
+}
+// Date actuellement affichée (vue live = données du jour ; sinon date du rejeu).
+function dateAffichee(){ return (HCUR<0 || !H) ? (D.date_donnees||aujourdhui()) : HDATES[HCUR]; }
+// Encadré informatif HTML de la phase de lune pour une date donnée.
+function luneInfoHTML(dateStr){
+  const ph = phaseLune(dateStr);
+  const pct = Math.round(ph.illum*100);
+  const bonus = Math.round((facteurLune(dateStr)-1)*1000)/10;   // % à une décimale
+  const tend = ph.montante ? "montante" : "descendante";
+  const effet = bonus>0 ? `bonus pousse <b>+${bonus} %</b>`
+    : (ph.montante ? "bonus négligeable (proche nouvelle lune)" : "pas de bonus (lune descendante)");
+  return `<div style="display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:#faf9f5;border-radius:10px;padding:8px 10px;margin:8px 0">
+     <span style="font-size:26px;line-height:1">${ph.emoji}</span>
+     <div style="font-size:12.5px;line-height:1.35">
+       <b>${ph.nom}</b> · ${pct} % illuminée · lune ${tend}<br>
+       <span style="color:#7a7a70">Nuit précédente · ${effet}</span></div></div>`;
+}
+// Injecte l'encadré lune là où un conteneur existe (panneau défaut ou détail maille).
+function majLuneBox(){
+  const html = luneInfoHTML(dateAffichee());
+  const a=document.getElementById("lune-box"); if(a) a.innerHTML=html;
+  const b=document.getElementById("d-lune");   if(b) b.innerHTML=html;
+}
 // Indice d'une FACE de forêt = indice de la maille modulé par l'exposition et
 // le stress du jour (réplique de indice_module() côté Python).
 function moduleFace(base, expo, stress){
@@ -370,7 +430,7 @@ function indiceAt(f){
 // étage de l'essence (les essences principales teintent plus fort).
 function styleFor(f){
   const g=f.properties.groupe;
-  return {fillColor:couleur(indiceAt(f)), weight:0.4, color:"#3d3d36",
+  return {fillColor:couleur(avecLune(indiceAt(f), dateAffichee())), weight:0.4, color:"#3d3d36",
           fillOpacity:BASE_FILL*(g?alphaOf(g):1), opacity:0.4};
 }
 
@@ -455,18 +515,20 @@ function appliquer(){
   const dd=document.getElementById("dept-date"), dv=document.getElementById("dept-val"),
         dot=document.getElementById("dept-dot"), mm=document.getElementById("m-moy");
   if(HCUR<0){                       // vue live du jour : valeurs serveur
+    const mlv = avecLune(D.moyenne_departement, D.date_donnees||aujourdhui());
     dd.textContent = D.date_donnees? "Données du "+D.date_donnees : "";
-    dv.textContent = (D.moyenne_departement!=null?D.moyenne_departement:"—")+" · "+D.niveau_departement;
-    dot.style.background = couleur(D.moyenne_departement);
-    if(mm) mm.textContent=(D.moyenne_departement!=null?D.moyenne_departement:"—")+" / 100";
+    dv.textContent = (mlv!=null?mlv:"—")+" · "+niveauLbl(mlv);
+    dot.style.background = couleur(mlv);
+    if(mm) mm.textContent=(mlv!=null?mlv:"—")+" / 100";
   } else {                          // rejeu historique / aujourd'hui / prévision
-    const moy=moyenneJour(HCUR);
+    const moy=avecLune(moyenneJour(HCUR), HDATES[HCUR]);
     const prefixe = HCUR<TODAY_IDX?"Rejeu du " : (HCUR>TODAY_IDX?"Prévision du ":"Aujourd'hui, ");
     dd.textContent = prefixe+frDate(HDATES[HCUR]);
     dv.textContent = (moy!=null?moy:"—")+" · "+niveauLbl(moy);
     dot.style.background = couleur(moy);
     if(mm) mm.textContent=(moy!=null?moy:"—")+" / 100";
   }
+  majLuneBox();
   rafraichirVolet();
 }
 if(H && HDATES.length>1){
@@ -594,6 +656,7 @@ function ouvrirDetail(mid, face){
     <p class="hint" style="margin-top:8px">${p.geologie_descr||""}${p.coef_geologie!=null&&p.coef_geologie<0.5?" — terrain défavorable au cèpe (calcaire).":""}${p.coef_foret!=null&&p.coef_foret<0.6?" — maille peu boisée.":""}${p.coef_essence!=null&&p.coef_essence<0.6?" — essences peu favorables.":""}</p>
     <div id="d-versant"></div>
     <div id="d-choc"></div>
+    <div id="d-lune"></div>
     <div class="metrics">
       ${metric("Indice cèpe","—","d-indice")}
       ${metric("Boisement",p.taux_boise!=null?Math.round(p.taux_boise*100)+" %":"—")}
@@ -662,11 +725,13 @@ function majDetailDate(){
   if(!SELMID) return;
   const p=D.mailles[SELMID], dyn=dynAt(SELMID);
   const set=(id,v)=>{const e=document.getElementById(id); if(e) e.textContent=v;};
-  set("d-indice",(dyn.indice!=null?dyn.indice:"—")+" · "+niveauLbl(dyn.indice));
+  const indL = avecLune(dyn.indice, dyn.date);
+  set("d-indice",(indL!=null?indL:"—")+" · "+niveauLbl(indL));
   set("d-swi",dyn.swi!=null?dyn.swi:"—");
   set("d-pluie",dyn.pluie!=null?dyn.pluie+" mm":"—");
   set("d-temp",dyn.temp!=null?dyn.temp+" °C":"—");
   set("d-date",dyn.live?(dyn.date||"jour courant"):frDate(dyn.date));
+  majLuneBox();
   let faceInd=null;
   if(SELFACE) faceInd = dyn.live? SELFACE.indice : moduleFace(dyn.indice, SELFACE.expo, dyn.stress);
   const dv=document.getElementById("d-versant"); if(dv) dv.innerHTML=versantHTML(SELFACE, dyn.indice, faceInd);
@@ -699,11 +764,13 @@ function remplirTop(){
   let top, titre;
   if(HCUR<0 || !H){ top=D.top||[]; titre="Meilleurs coins du jour"; }
   else { top=computeTop(HCUR); titre="Meilleurs coins · "+frDate(HDATES[HCUR]); }
+  const dt=(HCUR<0||!H)?(D.date_donnees||aujourdhui()):HDATES[HCUR];
   t.innerHTML="<h2>"+titre+"</h2>"+top.map(z=>{
     const v=z.versant && VERSANT_LBL[z.versant]?" · "+VERSANT_LBL[z.versant]:"";
-    return `<div class="row"><span class="dot" style="background:${couleur(z.indice)}"></span>
-     <b>${z.indice}</b> · ${z.niveau} <span class="pill">${Math.round(z.altitude||0)} m · ${z.geologie||""}${z.essence?" · "+(ESSLBL[z.essence]||z.essence):""}${v}</span></div>`;}).join("");
-  const mb=document.getElementById("m-best"); if(mb && top.length) mb.textContent=top[0].indice+" / 100";
+    const zi=avecLune(z.indice, dt);
+    return `<div class="row"><span class="dot" style="background:${couleur(zi)}"></span>
+     <b>${zi}</b> · ${niveauLbl(zi)} <span class="pill">${Math.round(z.altitude||0)} m · ${z.geologie||""}${z.essence?" · "+(ESSLBL[z.essence]||z.essence):""}${v}</span></div>`;}).join("");
+  const mb=document.getElementById("m-best"); if(mb && top.length) mb.textContent=avecLune(top[0].indice, dt)+" / 100";
 }
 
 // Rafraîchit le volet quand la date change (détail si une maille est ouverte, sinon top).
@@ -744,6 +811,7 @@ function fillSynth(){
 
 // Vue par défaut : synthèse prévision + top zones (date-aware) + légende.
 function remplirDefaut(){
+  majLuneBox();
   fillSynth();
   remplirTop();
   const lg = document.getElementById("legend");
@@ -773,7 +841,13 @@ function remplirFoot(){
 // carte ; import/export pour sauvegarde et transfert entre appareils.
 const OBS_KEY="champipi_obs_v1";
 let OBS=[];
-function obsLoad(){ try{OBS=JSON.parse(localStorage.getItem(OBS_KEY)||"[]");}catch(e){OBS=[];} }
+function obsLoad(){ try{OBS=JSON.parse(localStorage.getItem(OBS_KEY)||"[]");}catch(e){OBS=[];}
+  // Rétro-remplissage : ajoute les données de lune aux cueillettes antérieures.
+  let maj=false;
+  OBS.forEach(o=>{ if(o.date && o.lune_illum==null){ const ph=phaseLune(o.date);
+    o.lune_illum=+ph.illum.toFixed(3); o.lune_montante=ph.montante; o.lune_nom=ph.nom; maj=true; } });
+  if(maj) obsSave();
+}
 function obsSave(){ try{localStorage.setItem(OBS_KEY, JSON.stringify(OBS));}catch(e){alert("Sauvegarde impossible (stockage navigateur).");} }
 const EFFORT={balade:"Balade (passage)", recherche:"Recherche", intensive:"Recherche intensive"};
 const ESPECE={cepe:"Cèpe", autre:"Autre"};
@@ -856,12 +930,15 @@ function formulaireObs(pos, o){
   document.getElementById("o-res").addEventListener("input",e=>{document.getElementById("o-resv").textContent=e.target.value;});
   document.getElementById("o-cancel").addEventListener("click",fermerDetail);
   document.getElementById("o-save").addEventListener("click",()=>{
+    const dObs=document.getElementById("o-date").value||aujourdhui();
+    const phObs=phaseLune(dObs);   // lune de la nuit précédant la cueillette
     const obs={ id:o.id||("o"+Date.now()), lat, lon,
-      date:document.getElementById("o-date").value||aujourdhui(),
+      date:dObs,
       result:+document.getElementById("o-res").value,
       espece:document.getElementById("o-esp").value,
       effort:document.getElementById("o-eff").value,
       note:document.getElementById("o-note").value.trim(),
+      lune_illum:+phObs.illum.toFixed(3), lune_montante:phObs.montante, lune_nom:phObs.nom,
       saisi_le:new Date().toISOString().slice(0,16).replace("T"," ") };
     const i=OBS.findIndex(x=>x.id===obs.id);
     if(i>=0) OBS[i]=obs; else OBS.push(obs);
@@ -909,6 +986,7 @@ function montrerObs(o){
     <p class="hint" style="margin-top:8px"><span class="dot" style="display:inline-block;background:${couleurObs(o.result)}"></span>
       <b>${o.result}/10</b> · ${ESPECE[o.espece]||o.espece} · ${EFFORT[o.effort]||o.effort||"—"}${o.note?" · "+o.note:""}</p>
     <p class="hint">Position ${o.lat.toFixed(5)}, ${o.lon.toFixed(5)} · maille ${mid}</p>
+    ${luneInfoHTML(o.date)}
     ${zone}
     <div class="obsbtns">
       ${allerADate?`<button id="o-see">Voir la carte ce jour-là</button>`:""}

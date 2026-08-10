@@ -93,6 +93,12 @@
   .mob-body{display:contents}
   .mob-toggle{display:none}
 
+  /* Bouton « ma position » (géolocalisation) */
+  .locctrl button{width:34px;height:34px;font-size:18px;line-height:1;border:none;
+    background:#fff;color:#1976d2;cursor:pointer;border-radius:7px;
+    box-shadow:0 1px 4px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center}
+  .locctrl button:hover{background:#f2f1ec}
+  .locctrl button:disabled{opacity:.5;cursor:default}
   /* ====================== MOBILE ====================== */
   @media(max-width:760px){
     header{padding:9px 14px;gap:8px}
@@ -143,6 +149,8 @@
     /* Remonter les contrôles du bas au-dessus de la feuille réduite */
     .leaflet-bottom{bottom:112px}
     .leaflet-control-layers{margin-bottom:6px!important}
+    /* Bouton position plus grand au doigt */
+    .locctrl button{width:42px;height:42px;font-size:22px;border-radius:50%}
 
     .mob-collapse{
       padding:0!important;min-width:0!important;width:auto!important;
@@ -959,6 +967,37 @@ document.getElementById("obs-imp").addEventListener("change",e=>{ if(e.target.fi
 document.getElementById("obs-show").addEventListener("change",obsRefresh);
 
 obsLoad(); obsRefresh();
+
+// Contrôle « ma position » : centre la carte sur le GPS du téléphone.
+// La carte reste nord-en-haut (Leaflet ne pivote jamais).
+let _locMark=null, _locAcc=null;
+function locateMe(){
+  if(!navigator.geolocation){ alert("Géolocalisation indisponible sur cet appareil."); return; }
+  const btn=document.getElementById("loc-btn");
+  if(btn) btn.disabled=true;
+  navigator.geolocation.getCurrentPosition(
+    p=>{
+      const ll=[p.coords.latitude, p.coords.longitude], acc=p.coords.accuracy||0;
+      if(_locMark) map.removeLayer(_locMark);
+      if(_locAcc)  map.removeLayer(_locAcc);
+      _locAcc=L.circle(ll,{radius:acc,color:"#1976d2",weight:1,fillColor:"#1976d2",fillOpacity:.12,interactive:false}).addTo(map);
+      _locMark=L.circleMarker(ll,{radius:7,color:"#fff",weight:2,fillColor:"#1976d2",fillOpacity:1}).addTo(map);
+      map.setView(ll, Math.max(map.getZoom(),14));   // nord toujours en haut
+      if(btn) btn.disabled=false;
+    },
+    ()=>{ alert("Position GPS indisponible ou refusée."); if(btn) btn.disabled=false; },
+    {enableHighAccuracy:true, timeout:10000, maximumAge:15000});
+}
+const locCtrl=L.control({position:"topleft"});
+locCtrl.onAdd=function(){
+  const div=L.DomUtil.create("div","locctrl");
+  div.innerHTML=`<button id="loc-btn" type="button" title="Centrer sur ma position" aria-label="Centrer sur ma position">📍</button>`;
+  L.DomEvent.disableClickPropagation(div);
+  L.DomEvent.disableScrollPropagation(div);
+  return div;
+};
+locCtrl.addTo(map);
+document.getElementById("loc-btn").addEventListener("click",locateMe);
 
 remplirDefaut();
 remplirFoot();

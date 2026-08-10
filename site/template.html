@@ -206,8 +206,8 @@ const NIVEAUX = [
   {max:Infinity, label:"excellent", col:"var(--n5)"},
 ];
 function couleur(indice){
-  if(indice===null||indice===undefined) return "#9e9e9e";
-  return NIVEAUX.find(n=>indice<n.max).col
+  if(indice===null||indice===undefined||Number.isNaN(indice)) return "#9e9e9e";
+  return (NIVEAUX.find(n=>indice<n.max)||NIVEAUX[NIVEAUX.length-1]).col
     .replace("var(--n1)","#b71c1c").replace("var(--n2)","#ef6c00")
     .replace("var(--n3)","#f9a825").replace("var(--n4)","#7cb342").replace("var(--n5)","#2e7d32");
 }

@@ -20,3 +20,6 @@ _public_test/
 
 # macOS
 .DS_Store
+_versant_cache/
+# Prototypes locaux (exploration versant) — non déployés, un fichier fait 38 Mo.
+prototypes/

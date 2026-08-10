@@ -192,3 +192,42 @@ POIDS_TEMPERATURE = 0.20
 LAG_JOURS_PLAINE = 10
 LAG_JOURS_ALTITUDE = 15
 ALTITUDE_SEUIL = 1000  # au-dessus, on applique le lag "altitude"
+
+# --- Versant / exposition (modulation dynamique de l'indice) ---------------
+# Le versant (ubac/adret) n'est PAS un coefficient statique comme la géologie :
+# son signe s'inverse avec le déficit du moment. Un versant nord (frais,
+# humide) aide quand il fait sec/chaud ; un versant sud (chaud) aide quand il
+# fait froid. On module donc l'indice de la maille par face de forêt :
+#     mod = 1 + VERSANT_K * expo * stress          (indice_face = indice_maille * mod)
+# où `expo` (statique, ~[-1,+1], + = nord) vient du MNT (cf. build_versant.py)
+# et `stress` (dynamique, [-1,+1], + = sec/chaud) vient du SWI et de la
+# température de la maille (cf. versant.py). Fichier de géométrie découpée :
+VERSANT_GEOM_FILE = "data/versant_geom.json"   # statique (3 classes/maille/groupe)
+
+# Force de la modulation. Volontairement modérée : le versant AFFINE l'indice,
+# il ne le pilote pas. À CALIBRER sur les observations de terrain.
+VERSANT_K = 0.40
+
+# Classement d'un pixel du MNT en versant (seuils utilisés à la construction).
+VERSANT_PENTE_MIN = 6.0      # en dessous : trop plat, versant sans effet -> neutre
+VERSANT_NORTHNESS_SEUIL = 0.34  # |cos(orientation)| au-delà : nord (+) ou sud (-)
+
+# Étiquettes des 3 classes de versant (clé -> libellé lisible).
+VERSANT_CLASSES = {"nord": "nord (ubac)", "neutre": "neutre", "sud": "sud (adret)"}
+
+# --- Construction du "stress" hydro-thermique de la maille ------------------
+# stress = clamp( P_HYDRIQUE * dryness + P_THERMIQUE * chaleur , -1, +1 )
+#   dryness = (SWI_OPTIMAL - swi) / (SWI_OPTIMAL - SWI_MIN)   (+ = sol sec)
+#   chaleur = (temp - TEMP_MID) / TEMP_DEMI                   (+ = chaud)
+VERSANT_TEMP_MID = 16.0    # centre de la plage optimale (≈ (12+20)/2)
+VERSANT_TEMP_DEMI = 8.0    # demi-amplitude thermique de référence
+VERSANT_POIDS_HYDRIQUE = 0.60
+VERSANT_POIDS_THERMIQUE = 0.40
+
+# Allègement de la géométrie versant (contours pixel 10 m -> page légère).
+# Les contours issus du raster sont en "marches d'escalier" : on simplifie
+# fortement (tolérance en mètres, L93) et on arrondit les coordonnées WGS84,
+# invisibles à l'échelle départementale mais décisifs pour le poids du fichier.
+VERSANT_SIMPLIFY_M = 120         # tolérance de simplification (m)
+VERSANT_COORD_DECIMALES = 5      # arrondi des coordonnées WGS84 (~1 m)
+VERSANT_AIRE_MIN_HA = 0.5        # on jette les faces < 0.5 ha (bruit)

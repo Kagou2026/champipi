@@ -107,11 +107,23 @@ document.getElementById("m-best").textContent = best ? (best.indice+" / 100") : 
 
 // Carte
 const map = L.map("map",{scrollWheelZoom:true}).setView([44.52,3.55],9);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-  {maxZoom:17, attribution:"© OpenStreetMap · Indice : SIM Météo-France, BRGM, Open-Meteo · Forêts : BD Forêt V2 IGN"}).addTo(map);
+const ATTRIB="Indice : SIM Météo-France, BRGM, Open-Meteo · Forêts : BD Forêt V2 IGN · Versant : MNT IGN RGE ALTI";
+const fondTopo=L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+  {maxZoom:17, attribution:"© OpenTopoMap (CC-BY-SA) · "+ATTRIB});
+const fondOSM=L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  {maxZoom:17, attribution:"© OpenStreetMap · "+ATTRIB});
+const fondSat=L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  {maxZoom:18, attribution:"Imagerie © Esri, Maxar, Earthstar Geographics · "+ATTRIB});
+fondTopo.addTo(map);   // fond par défaut : relief topographique (lisibilité du versant)
+// Sélecteur de fond de carte (Topo ⇄ Plan ⇄ Satellite).
+L.control.layers({"Topo (OpenTopoMap)":fondTopo,"Plan (OSM)":fondOSM,"Satellite":fondSat},
+  null,{position:"bottomleft"}).addTo(map);
 
 let chart=null;
-const BASE_FILL=0.72;
+const BASE_FILL=0.60;   // forêts un peu plus transparentes (relief visible dessous)
+// Libellés des classes de versant.
+const VERSANT_LBL={nord:"versant nord (ubac)", sud:"versant sud (adret)", neutre:"versant neutre"};
 // Config des groupes d'essence embarquée par le robot.
 const GRP={}, ESSLBL={};
 (D.essence_groupes||[]).forEach(g=>{GRP[g.key]=g; ESSLBL[g.key]=g.label;});
@@ -136,7 +148,7 @@ Object.keys(parGroupe).forEach(g=>{
   const lyr=L.geoJSON({type:"FeatureCollection",features:parGroupe[g]},{
     style:styleFor,
     onEachFeature:(f,l)=>{
-      l.on("click",()=>{const p=D.mailles[f.properties.maille_id]; if(p) montrerDetail(p);});
+      l.on("click",()=>{const p=D.mailles[f.properties.maille_id]; if(p) montrerDetail(p, f.properties);});
       l.on("mouseover",()=>l.setStyle({weight:2.2,fillOpacity:0.9}));
       l.on("mouseout",()=>lyr.resetStyle(l));
     }
@@ -202,13 +214,29 @@ function composition(rep){
   const txt=ent.map(([k,v])=>`${ESSLBL[k]||k} ${Math.round(v/tot*100)}%`).join(" · ");
   return `<p class="hint">Composition boisée : ${txt}.</p>`;
 }
-function montrerDetail(p){
+// Ligne "versant" affichée quand on clique une face de forêt.
+function versantLigne(face, p){
+  if(!face || !face.versant) return "";
+  const lbl = VERSANT_LBL[face.versant] || face.versant;
+  const base = p.indice, ind = face.indice;
+  let effet = "";
+  if(base!=null && ind!=null && base>0){
+    const d = Math.round((ind/base - 1)*100);
+    effet = d===0 ? " — sans effet dans les conditions du jour"
+      : ` — indice <b>${ind}</b> contre ${base} de base : <b>${d>0?"+":""}${d}%</b> (${d>0?"favorisé":"pénalisé"} aujourd'hui)`;
+  }
+  const col = face.expo>0.05 ? "#1565c0" : (face.expo<-0.05 ? "#b2182b" : "#8a8a80");
+  return `<p class="hint" style="border-left:3px solid ${col};padding-left:8px">
+      Face : <b>${lbl}</b> · exposition ${face.expo>0?"+":""}${face.expo}${effet}.</p>`;
+}
+function montrerDetail(p, face){
   const geo = {acide:"sol acide", neutre:"sol neutre", calcaire:"sol calcaire", inconnu:"sol ?"}[p.geologie_classe]||p.geologie_classe;
   const el = document.getElementById("detail");
   el.innerHTML = `
     <h2>Maille · ${p.altitude!=null? Math.round(p.altitude)+" m":""}
       <span class="pill">${geo}</span></h2>
     <p class="hint">${p.geologie_descr||""}${p.coef_geologie!=null&&p.coef_geologie<0.5?" — terrain défavorable au cèpe (calcaire), indice réduit.":""}${p.coef_foret!=null&&p.coef_foret<0.6?" — maille peu boisée, potentiel réduit faute d'arbres hôtes.":""}${p.coef_essence!=null&&p.coef_essence<0.6?" — essences peu favorables au cèpe (hôtes secondaires), indice réduit.":""}</p>
+    ${versantLigne(face, p)}
     <div class="metrics">
       ${metric("Indice cèpe", (p.indice!=null?p.indice:"—")+" · "+p.niveau)}
       ${metric("Pousse estimée", "~"+p.lag_jours+" j")}
@@ -251,9 +279,10 @@ function montrerDetail(p){
 function remplirDefaut(){
   const t = document.getElementById("top-zones");
   if(t && D.top){
-    t.innerHTML = "<h2>Meilleures mailles</h2>" + D.top.map(z=>
-      `<div class="row"><span class="dot" style="background:${couleur(z.indice)}"></span>
-       <b>${z.indice}</b> · ${z.niveau} <span class="pill">${Math.round(z.altitude||0)} m · ${z.geologie}${z.essence?" · "+(ESSLBL[z.essence]||z.essence):""}</span></div>`).join("");
+    t.innerHTML = "<h2>Meilleurs coins du jour</h2>" + D.top.map(z=>{
+      const v = z.versant && VERSANT_LBL[z.versant] ? " · "+VERSANT_LBL[z.versant] : "";
+      return `<div class="row"><span class="dot" style="background:${couleur(z.indice)}"></span>
+       <b>${z.indice}</b> · ${z.niveau} <span class="pill">${Math.round(z.altitude||0)} m · ${z.geologie}${z.essence?" · "+(ESSLBL[z.essence]||z.essence):""}${v}</span></div>`;}).join("");
   }
   const lg = document.getElementById("legend");
   if(lg){
@@ -261,7 +290,8 @@ function remplirDefaut(){
       const range = n.max===Infinity? "75–100" : (NIVEAUX.indexOf(n)===0?"0–15":"");
       return `<div class="li"><span class="dot" style="background:${couleur(n.max-1)}"></span>${n.label}</div>`;
     }).join("") + `<div class="li"><span class="dot" style="background:#9e9e9e"></span>donnée manquante</div>`
-    + `<div class="li" style="margin-top:6px">Teinte : essences <b>principales</b> pleines, secondaires atténuées, autres pâles. Filtre en haut à droite de la carte.</div>`;
+    + `<div class="li" style="margin-top:6px">Teinte : essences <b>principales</b> pleines, secondaires atténuées, autres pâles. Filtre en haut à droite de la carte.</div>`
+    + `<div class="li" style="margin-top:6px">Chaque forêt est découpée par <b>versant</b> — ubac (nord, frais/humide) et adret (sud, chaud/sec). L'indice de chaque face est modulé selon la météo du jour : sol sec ou chaud → l'ubac est favorisé, temps froid → l'adret. Cliquez une face pour le détail.</div>`;
   }
 }
 function remplirFoot(){
@@ -269,9 +299,10 @@ function remplirFoot(){
   if(f) f.innerHTML =
     `Généré le ${D.genere_le} · ${D.nb_mailles} mailles de 8 km.<br>
      Indice indicatif combinant humidité du sol (SWI), pluie sur 15 j et température,
-     pondéré par la géologie, le boisement et l'essence hôte. Il ne remplace pas l'observation de terrain ni la
-     prudence sur la comestibilité.<br>
-     Sources : Météo-France/SAFRAN (data.gouv), BRGM, Open-Meteo, IGN.`;
+     pondéré par la géologie, le boisement et l'essence hôte, puis <b>modulé par le versant</b>
+     (ubac/adret, MNT IGN RGE ALTI 10 m) selon la météo du jour. Il ne remplace pas l'observation de
+     terrain ni la prudence sur la comestibilité.<br>
+     Sources : Météo-France/SAFRAN (data.gouv), BRGM, Open-Meteo, IGN (BD Forêt V2, RGE ALTI).`;
 }
 remplirDefaut();
 remplirFoot();

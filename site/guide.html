@@ -72,6 +72,17 @@
   th{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:600}
   td.ok{color:var(--n5);font-weight:600} td.no{color:var(--n1);font-weight:600}
 
+  /* glossaire des valeurs du panneau */
+  .gloss{display:grid;gap:10px;margin:16px 0}
+  .gloss .row{display:grid;grid-template-columns:190px 1fr;gap:16px;align-items:start;border:1px solid var(--line);border-radius:12px;padding:12px 15px;background:var(--panel)}
+  .gloss .lab .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .gloss .lab .v{font-size:18px;font-weight:650;margin-top:2px;color:var(--ink)}
+  .gloss .lab .v small{font-size:12px;font-weight:400;color:var(--muted)}
+  .gloss .txt{font-size:14px;margin:0;align-self:center}
+  .gloss .txt b{font-weight:640}
+  .gloss .dyn{background:var(--greenbg);border-color:var(--greenln)}
+  @media(max-width:560px){ .gloss .row{grid-template-columns:1fr;gap:6px} }
+
   .toc{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:22px 0;font-size:14.5px}
   .toc b{display:block;margin-bottom:6px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
   .toc a{color:var(--ink);text-decoration:none;display:block;padding:3px 0;border-bottom:1px dashed var(--line)}
@@ -105,6 +116,7 @@
     <a href="#combine"><span class="n">6</span>Comment tout se combine en une note</a>
     <a href="#versant"><span class="n">7</span>Le versant : le correcteur qui change de signe</a>
     <a href="#idees"><span class="n">8</span>Idées reçues &amp; garde-fous</a>
+    <a href="#panneau"><span class="n">9</span>Lire le panneau : ce que veut dire chaque valeur affichée</a>
   </div>
 
   <h2 id="bio"><span class="num">1</span>Le point de départ</h2>
@@ -229,6 +241,32 @@
   <div class="warn"><b>La lune.</b> Très présente dans le folklore de la cueillette, mais <b>aucune preuve scientifique</b> d'un effet sur la fructification. Champipi ne l'utilise pas comme variable — l'eau du sol, la température et le décalage suffisent à expliquer l'essentiel.</div>
   <div class="warn"><b>Comestibilité.</b> L'indice dit « où et quand chercher », <b>jamais</b> si un champignon est mangeable. Toute cueillette exige une identification sûre, au besoin auprès d'un pharmacien ou d'une société mycologique. En cas de doute, on ne consomme pas.</div>
   <p class="muted" style="font-size:14px">Enfin, tous les seuils cités sont des <strong>points de départ</strong>, à recaler avec vos observations de terrain. Un coin que vous connaissez qui produit toujours, ou jamais, en dit plus long que n'importe quel modèle — c'est justement ce retour terrain qui permet d'affiner les curseurs (le poids du versant, notamment).</p>
+
+  <h2 id="panneau"><span class="num">9</span>Lire le panneau&nbsp;: ce que veut dire chaque valeur affichée</h2>
+  <p>Sur la carte, avant de cliquer, le volet montre déjà deux repères d'ensemble&nbsp;:</p>
+  <div class="gloss">
+    <div class="row"><div class="lab"><div class="k">Moyenne 48</div><div class="v">48 <small>/ 100</small></div></div><p class="txt">L'indice <b>moyen du département 48</b> (la Lozère) ce jour. Le «&nbsp;48&nbsp;» est le numéro du département, pas la note&nbsp;: donne le contexte général (saison lancée ou non).</p></div>
+    <div class="row"><div class="lab"><div class="k">Meilleure maille</div><div class="v">— <small>/ 100</small></div></div><p class="txt">La note de la <b>maille la mieux placée</b> aujourd'hui. Utile pour savoir si «&nbsp;ça vaut le coup de sortir&nbsp;» quelque part dans le département.</p></div>
+  </div>
+
+  <p>Quand tu <strong>cliques une maille</strong> (un carré de 8&nbsp;km), le détail s'ouvre. En-tête&nbsp;: <strong>l'altitude</strong> et un badge de <strong>géologie</strong> (ex. «&nbsp;Granites&nbsp;»), suivis d'une phrase d'alerte si le terrain est défavorable (calcaire, peu boisé, essences peu favorables). Puis les encadrés&nbsp;:</p>
+  <div class="gloss">
+    <div class="row"><div class="lab"><div class="k">Indice cèpe</div><div class="v">— <small>/ 100 · niveau</small></div></div><p class="txt">La <b>note finale</b> de la maille, de 0 à 100, avec son niveau en toutes lettres (nul → excellent) et la couleur de la case. C'est la synthèse de tout le reste (§6).</p></div>
+    <div class="row"><div class="lab"><div class="k">Boisement</div><div class="v">— <small>%</small></div></div><p class="txt">Part de la maille réellement <b>couverte de forêt</b>. Une maille quasi nue (estive, causse pelé) est écartée même si le sol est bon&nbsp;: pas d'arbre, pas d'hôte (§3).</p></div>
+    <div class="row"><div class="lab"><div class="k">Essence dominante</div><div class="v">Hêtre</div></div><p class="txt">L'<b>arbre le plus présent</b> dans la maille. Chêne, hêtre, châtaignier, épicéa/sapin, pin sont de bons hôtes du cèpe&nbsp;; peupliers et landes, non (§3).</p></div>
+    <div class="row"><div class="lab"><div class="k">Pousse estimée</div><div class="v">~10 <small>j</small></div></div><p class="txt">Le <b>décalage</b> attendu entre les conditions du jour et les cèpes sortis&nbsp;: ~10&nbsp;j en plaine, ~15&nbsp;j en altitude (§5). L'indice du jour vise déjà cette échéance.</p></div>
+    <div class="row"><div class="lab"><div class="k">Humidité sol (SWI)</div><div class="v">— <small>0 à 1</small></div></div><p class="txt">L'eau <b>stockée dans le sol</b> (réanalyse SAFRAN). La variable reine (§4)&nbsp;: rien en dessous de ~0,30, idéal vers 0,65.</p></div>
+    <div class="row"><div class="lab"><div class="k">Pluie 15 j</div><div class="v">— <small>mm</small></div></div><p class="txt">Le <b>cumul de pluie</b> tombé sur les 15 derniers jours&nbsp;: le déclencheur qui recharge le sol (~20&nbsp;mm pour amorcer, ~60&nbsp;mm pour un bon épisode).</p></div>
+    <div class="row"><div class="lab"><div class="k">Température</div><div class="v">— <small>°C</small></div></div><p class="txt">La <b>température moyenne</b> récente (Open-Meteo). Fenêtre confortable 12–20&nbsp;°C&nbsp;; sert aussi de base au choc thermique.</p></div>
+    <div class="row"><div class="lab"><div class="k">Relevé du</div><div class="v">— <small>date</small></div></div><p class="txt">La <b>date des données</b> affichées. «&nbsp;Jour courant&nbsp;» en vue directe, ou la date choisie quand tu fais glisser le curseur temporel (rejeu de l'historique).</p></div>
+  </div>
+
+  <p>Enfin, deux <strong>lignes dynamiques</strong> apparaissent au-dessus des encadrés quand elles jouent — ce sont les correcteurs déjà vus, exprimés en clair pour cette maille&nbsp;:</p>
+  <div class="gloss">
+    <div class="row dyn"><div class="lab"><div class="k">Choc thermique</div><div class="v">+8&nbsp;%</div></div><p class="txt">Le refroidissement récent (4&nbsp;j récents vs 7&nbsp;j avant) et son <b>effet chiffré</b> sur l'indice (§4). Peut être positif (il a refroidi) ou négatif (il a réchauffé).</p></div>
+    <div class="row dyn"><div class="lab"><div class="k">Versant</div><div class="v">ubac · +12&nbsp;%</div></div><p class="txt">L'orientation dominante (ubac/adret) et son <b>effet du jour</b>, dont le signe dépend du temps sec/froid (§7). Affiché quand une face de forêt est sélectionnée.</p></div>
+  </div>
+  <p class="muted" style="font-size:14px">Sous les encadrés, le graphe <strong>«&nbsp;Historique de l'indice cèpe&nbsp;»</strong> retrace la note sur toute la période (courbe verte), avec la pluie 15&nbsp;j en repère bleu et un point rouge sur la date sélectionnée. Il montre d'un coup d'œil si la maille est en train de monter ou de retomber.</p>
 
   <div class="foot">
     Champipi — modèle indicatif d'aide à la décision, sur données ouvertes (SAFRAN / Météo-France pour l'humidité et la pluie, Open-Meteo pour la température, BRGM pour la géologie, IGN BD Forêt pour le boisement et les essences, modèle d'altitude IGN pour le versant). Ne remplace ni la connaissance du terrain, ni l'identification des espèces.

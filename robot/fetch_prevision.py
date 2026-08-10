@@ -15,7 +15,8 @@ import requests
 from config import OPENMETEO_URL
 
 
-def prevision_par_maille(coords, past_days=20, forecast_days=16, lot=50, timeout=60):
+def prevision_par_maille(coords, past_days=20, forecast_days=16, lot=50,
+                         timeout=60, essais=3, backoff=5):
     """coords : liste de (lat, lon). Renvoie une liste (même ordre) de dicts :
         {"YYYY-MM-DD": {"precip": mm, "temp": °C, "et0": mm}, ...}
     Jour(s) manquant(s) simplement absents du dict.
@@ -31,9 +32,22 @@ def prevision_par_maille(coords, past_days=20, forecast_days=16, lot=50, timeout
             "forecast_days": forecast_days,
             "timezone": "Europe/Paris",
         }
-        r = requests.get(OPENMETEO_URL, params=params, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
+        # Open-Meteo est gratuit et parfois lent : on réessaie sur erreur réseau
+        # (timeout / 5xx) avec backoff au lieu d'échouer au premier coup.
+        data = None
+        for essai in range(1, essais + 1):
+            try:
+                r = requests.get(OPENMETEO_URL, params=params, timeout=timeout)
+                r.raise_for_status()
+                data = r.json()
+                break
+            except requests.exceptions.RequestException as e:
+                if essai == essais:
+                    raise
+                attente = backoff * essai
+                print(f"      prévision : tentative {essai}/{essais} échouée "
+                      f"({type(e).__name__}) — nouvel essai dans {attente:.0f}s")
+                time.sleep(attente)
         if isinstance(data, dict):
             data = [data]
         for point in data:

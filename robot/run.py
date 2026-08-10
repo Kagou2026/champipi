@@ -302,11 +302,18 @@ def main():
 
     print("    Prévision de sortie (Open-Meteo)…")
     hist_fin = historique["fin"] if historique else date_donnees
-    prevision = construire_prevision(terrain, mailles, prevision_par_maille(coords),
-                                     hist_fin, historique)
-    if prevision:
-        print(f"    prévision {prevision['dates'][0]} → {prevision['dates'][-1]} "
-              f"({len(prevision['dates'])} j)")
+    # La prévision dépend d'un service externe (Open-Meteo). Si elle échoue, on
+    # publie quand même le site sans le bloc prévision — la page sait s'en passer.
+    try:
+        prevision = construire_prevision(terrain, mailles, prevision_par_maille(coords),
+                                         hist_fin, historique)
+        if prevision:
+            print(f"    prévision {prevision['dates'][0]} → {prevision['dates'][-1]} "
+                  f"({len(prevision['dates'])} j)")
+    except Exception as e:
+        prevision = None
+        print(f"    ⚠ prévision indisponible ({type(e).__name__}: {e}) — "
+              f"site publié sans le bloc prévision.")
 
     payload = {
         "genere_le": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M"),

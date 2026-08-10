@@ -128,10 +128,11 @@ def moissonner(urls, rev):
 
 
 def series_par_maille(data, coef, debut=DEBUT):
-    """{maille_id: {date: (indice, stress)}} pour les dates >= `debut`.
+    """{maille_id: {date: (indice, stress, swi, pluie15, temp)}} pour dates >= `debut`.
 
     Le cumul pluie 15 j utilise la fenêtre complète (y compris des jours
-    antérieurs à `debut`, présents dans `data` pour l'amorçage)."""
+    antérieurs à `debut`, présents dans `data` pour l'amorçage). On stocke aussi
+    swi/pluie/temp pour que le volet latéral puisse suivre la date choisie."""
     out = {}
     for mid, jours in data.items():
         dates = sorted(jours)
@@ -144,24 +145,32 @@ def series_par_maille(data, coef, debut=DEBUT):
                           if jours[x]["pluie"] is not None)
             swi = jours[d]["swi"]; t = jours[d]["t"]
             r = calcul_indice(swi, pluie15, t, coef.get(mid, 1.0))
-            s[d] = (r["indice"], round(stress_hydrothermique(swi, t), 3))
+            s[d] = (r["indice"], round(stress_hydrothermique(swi, t), 3),
+                    None if swi is None else round(swi, 3),
+                    round(pluie15, 1),
+                    None if t is None else round(t, 1))
         out[mid] = s
     return out
 
 
 def aligner(par_maille):
-    """{mid: {date:(i,s)}} -> (dates triées, {mid: {"i":[...], "s":[...]}})."""
+    """{mid: {date:(i,s,w,p,t)}} -> (dates triées, {mid: {"i","s","w","p","t"}}).
+
+    i=indice, s=stress, w=SWI, p=pluie 15 j (mm), t=température (°C)."""
     toutes = set()
     for s in par_maille.values():
         toutes.update(s)
     dates = sorted(toutes)
     pos = {d: i for i, d in enumerate(dates)}
+    n = len(dates)
     mailles = {}
     for mid, s in par_maille.items():
-        ind = [None] * len(dates); stress = [None] * len(dates)
-        for d, (i_, st_) in s.items():
-            ind[pos[d]] = i_; stress[pos[d]] = st_
-        mailles[mid] = {"i": ind, "s": stress}
+        cols = {k: [None] * n for k in ("i", "s", "w", "p", "t")}
+        for d, (ind, stre, swi, pl, tp) in s.items():
+            k = pos[d]
+            cols["i"][k] = ind; cols["s"][k] = stre
+            cols["w"][k] = swi; cols["p"][k] = pl; cols["t"][k] = tp
+        mailles[mid] = cols
     return dates, mailles
 
 
@@ -186,7 +195,10 @@ def historique_a_jour():
         d = {}
         for i, dt in enumerate(dates):
             if arr["i"][i] is not None:
-                d[dt] = (arr["i"][i], arr["s"][i])
+                d[dt] = (arr["i"][i], arr["s"][i],
+                         arr.get("w", [None] * len(dates))[i],
+                         arr.get("p", [None] * len(dates))[i],
+                         arr.get("t", [None] * len(dates))[i])
         par[mid] = d
     hmax = dates[-1] if dates else DEBUT
 

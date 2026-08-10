@@ -160,6 +160,10 @@ function moduleFace(base, expo, stress){
 const H = (D.historique && D.historique.dates && D.historique.dates.length) ? D.historique : null;
 const HDATES = H ? H.dates : [];
 let HCUR = -1;   // -1 = vue du jour (live, valeurs serveur) ; sinon index dans HDATES.
+// Sélection courante dans le volet (maille cliquée) : permet au détail de suivre
+// la date du rejeu. Déclarés ici pour être initialisés avant le contrôle rejeu.
+let SELMID = null, SELFACE = null;
+const DETAIL_HOME = document.getElementById("detail").innerHTML;
 
 // Moyenne département à l'index k de l'historique.
 function moyenneJour(k){
@@ -197,7 +201,7 @@ Object.keys(parGroupe).forEach(g=>{
   const lyr=L.geoJSON({type:"FeatureCollection",features:parGroupe[g]},{
     style:styleFor,
     onEachFeature:(f,l)=>{
-      l.on("click",()=>{const p=D.mailles[f.properties.maille_id]; if(p) montrerDetail(p, f.properties);});
+      l.on("click",()=>{ if(D.mailles[f.properties.maille_id]) ouvrirDetail(f.properties.maille_id, f.properties);});
       l.on("mouseover",()=>l.setStyle({weight:2.2,fillOpacity:0.9}));
       l.on("mouseout",()=>lyr.resetStyle(l));
     }
@@ -276,6 +280,7 @@ function appliquer(){
     dot.style.background = couleur(moy);
     if(mm) mm.textContent=(moy!=null?moy:"—")+" / 100";
   }
+  rafraichirVolet();
 }
 if(H && HDATES.length>1){
   // index de la date la plus proche d'une chaîne "YYYY-MM-DD".
@@ -338,7 +343,7 @@ if(H && HDATES.length>1){
   setLive();
 }
 
-function metric(k,v){return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;}
+function metric(k,v,id){return `<div class="metric"><div class="k">${k}</div><div class="v"${id?` id="${id}"`:""}>${v}</div></div>`;}
 function composition(rep){
   if(!rep) return "";
   const ent=Object.entries(rep).filter(([k,v])=>v>0);
@@ -348,76 +353,160 @@ function composition(rep){
   const txt=ent.map(([k,v])=>`${ESSLBL[k]||k} ${Math.round(v/tot*100)}%`).join(" · ");
   return `<p class="hint">Composition boisée : ${txt}.</p>`;
 }
-// Ligne "versant" affichée quand on clique une face de forêt.
-function versantLigne(face, p){
+// Valeurs dynamiques d'une maille : live (valeurs serveur) ou date d'historique.
+function dynAt(mid){
+  const p=D.mailles[mid];
+  if(HCUR<0 || !H || !H.mailles[mid])
+    return {indice:p.indice, swi:p.swi, pluie:p.pluie_15j, temp:p.temp,
+            stress:p.stress, date:D.date_donnees, live:true};
+  const m=H.mailles[mid], k=HCUR;
+  return {indice:m.i[k], swi:(m.w?m.w[k]:null), pluie:(m.p?m.p[k]:null),
+          temp:(m.t?m.t[k]:null), stress:m.s[k], date:HDATES[k], live:false};
+}
+
+// Ligne "versant" (face cliquée), recalculée pour la date courante.
+function versantHTML(face, base, faceInd){
   if(!face || !face.versant) return "";
   const lbl = VERSANT_LBL[face.versant] || face.versant;
-  const base = p.indice, ind = face.indice;
   let effet = "";
-  if(base!=null && ind!=null && base>0){
-    const d = Math.round((ind/base - 1)*100);
-    effet = d===0 ? " — sans effet dans les conditions du jour"
-      : ` — indice <b>${ind}</b> contre ${base} de base : <b>${d>0?"+":""}${d}%</b> (${d>0?"favorisé":"pénalisé"} aujourd'hui)`;
+  if(base!=null && faceInd!=null && base>0){
+    const d = Math.round((faceInd/base - 1)*100);
+    effet = d===0 ? " — sans effet ce jour-là"
+      : ` — indice <b>${faceInd}</b> contre ${base} de base : <b>${d>0?"+":""}${d}%</b> (${d>0?"favorisé":"pénalisé"})`;
   }
   const col = face.expo>0.05 ? "#1565c0" : (face.expo<-0.05 ? "#b2182b" : "#8a8a80");
   return `<p class="hint" style="border-left:3px solid ${col};padding-left:8px">
       Face : <b>${lbl}</b> · exposition ${face.expo>0?"+":""}${face.expo}${effet}.</p>`;
 }
-function montrerDetail(p, face){
-  const geo = {acide:"sol acide", neutre:"sol neutre", calcaire:"sol calcaire", inconnu:"sol ?"}[p.geologie_classe]||p.geologie_classe;
-  const el = document.getElementById("detail");
-  el.innerHTML = `
-    <h2>Maille · ${p.altitude!=null? Math.round(p.altitude)+" m":""}
-      <span class="pill">${geo}</span></h2>
-    <p class="hint">${p.geologie_descr||""}${p.coef_geologie!=null&&p.coef_geologie<0.5?" — terrain défavorable au cèpe (calcaire), indice réduit.":""}${p.coef_foret!=null&&p.coef_foret<0.6?" — maille peu boisée, potentiel réduit faute d'arbres hôtes.":""}${p.coef_essence!=null&&p.coef_essence<0.6?" — essences peu favorables au cèpe (hôtes secondaires), indice réduit.":""}</p>
-    ${versantLigne(face, p)}
+
+// Ouvre le détail d'une maille : structure + graphe d'historique (une seule fois),
+// puis remplissage des valeurs par majDetailDate() selon la date courante.
+function ouvrirDetail(mid, face){
+  SELMID=mid; SELFACE=face||null;
+  const p=D.mailles[mid];
+  const geo={acide:"sol acide",neutre:"sol neutre",calcaire:"sol calcaire",inconnu:"sol ?"}[p.geologie_classe]||p.geologie_classe;
+  const el=document.getElementById("detail");
+  el.innerHTML=`
+    <div style="display:flex;align-items:center;gap:8px">
+      <button id="d-back" type="button" style="border:1px solid var(--line);background:#faf9f5;border-radius:7px;padding:2px 8px;font-size:12px;cursor:pointer;color:var(--ink)">‹ retour</button>
+      <h2 style="margin:0">Maille · ${p.altitude!=null?Math.round(p.altitude)+" m":""} <span class="pill">${geo}</span></h2>
+    </div>
+    <p class="hint" style="margin-top:8px">${p.geologie_descr||""}${p.coef_geologie!=null&&p.coef_geologie<0.5?" — terrain défavorable au cèpe (calcaire).":""}${p.coef_foret!=null&&p.coef_foret<0.6?" — maille peu boisée.":""}${p.coef_essence!=null&&p.coef_essence<0.6?" — essences peu favorables.":""}</p>
+    <div id="d-versant"></div>
     <div class="metrics">
-      ${metric("Indice cèpe", (p.indice!=null?p.indice:"—")+" · "+p.niveau)}
-      ${metric("Pousse estimée", "~"+p.lag_jours+" j")}
-      ${metric("Boisement", p.taux_boise!=null?Math.round(p.taux_boise*100)+" %":"—")}
-      ${metric("Essence dominante", p.essence_dominante?(ESSLBL[p.essence_dominante]||p.essence_dominante):"—")}
-      ${metric("Humidité sol (SWI)", p.swi!=null?p.swi:"—")}
-      ${metric("Pluie 15 j", p.pluie_15j!=null?p.pluie_15j+" mm":"—")}
-      ${metric("Température", p.temp!=null?p.temp+" °C":"—")}
-      ${metric("Anomalie SWI", p.anomalie_swi!=null?p.anomalie_swi:"—")}
+      ${metric("Indice cèpe","—","d-indice")}
+      ${metric("Boisement",p.taux_boise!=null?Math.round(p.taux_boise*100)+" %":"—")}
+      ${metric("Essence dominante",p.essence_dominante?(ESSLBL[p.essence_dominante]||p.essence_dominante):"—")}
+      ${metric("Pousse estimée","~"+p.lag_jours+" j")}
+      ${metric("Humidité sol (SWI)","—","d-swi")}
+      ${metric("Pluie 15 j","—","d-pluie")}
+      ${metric("Température","—","d-temp")}
+      ${metric("Relevé du","—","d-date")}
     </div>
     ${composition(p.essence_repartition)}
+    <div style="font-size:12px;font-weight:650;margin:10px 0 2px">Historique de l'indice cèpe</div>
     <div class="chartwrap"><canvas id="chart"></canvas></div>
-    <p class="hint">Sous-scores (0–1) : humidité ${p.s_humidite ?? "—"} · pluie ${p.s_pluie ?? "—"} · température ${p.s_temp ?? "—"}. L'indice du jour anticipe déjà la pousse à ~${p.lag_jours} jours.</p>
+    <p class="hint" id="d-note"></p>
     <div class="foot" id="foot"></div>`;
+  document.getElementById("d-back").addEventListener("click",fermerDetail);
   remplirFoot();
-  const serie = p.serie||[];
-  const ctx = document.getElementById("chart");
-  if(chart) chart.destroy();
-  chart = new Chart(ctx,{
-    data:{
-      labels: serie.map(s=>s.date.slice(5)),
-      datasets:[
-        {type:"line", label:"Indice", data:serie.map(s=>s.indice), yAxisID:"y",
-         borderColor:"#2e7d32", backgroundColor:"rgba(46,125,50,.12)", fill:true, tension:.3, pointRadius:2},
-        {type:"line", label:"Pluie 15j (mm)", data:serie.map(s=>s.pluie_15j), yAxisID:"y2",
-         borderColor:"#1e88e5", borderDash:[4,3], pointRadius:0, tension:.3},
-      ]
-    },
-    options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:"index"},
-      plugins:{legend:{labels:{boxWidth:12,font:{size:10}}}},
-      scales:{
-        y:{min:0,max:100,title:{display:true,text:"indice",font:{size:9}},ticks:{font:{size:9}}},
-        y2:{position:"right",grid:{drawOnChartArea:false},ticks:{font:{size:9}}},
-        x:{ticks:{font:{size:9},maxRotation:0,autoSkip:true,maxTicksLimit:6}}
-      }}
-  });
+  construireGraph(mid);
+  majDetailDate();
 }
 
-// Top zones + légende (vue par défaut)
-function remplirDefaut(){
-  const t = document.getElementById("top-zones");
-  if(t && D.top){
-    t.innerHTML = "<h2>Meilleurs coins du jour</h2>" + D.top.map(z=>{
-      const v = z.versant && VERSANT_LBL[z.versant] ? " · "+VERSANT_LBL[z.versant] : "";
-      return `<div class="row"><span class="dot" style="background:${couleur(z.indice)}"></span>
-       <b>${z.indice}</b> · ${z.niveau} <span class="pill">${Math.round(z.altitude||0)} m · ${z.geologie}${z.essence?" · "+(ESSLBL[z.essence]||z.essence):""}${v}</span></div>`;}).join("");
+function fermerDetail(){
+  SELMID=null; SELFACE=null;
+  if(chart){ chart.destroy(); chart=null; }
+  document.getElementById("detail").innerHTML=DETAIL_HOME;
+  remplirDefaut();
+  appliquer();
+}
+
+// Graphe : indice cèpe sur tout l'historique (+ pluie 15 j en contexte) et un
+// repère rouge sur la date sélectionnée. Repli sur la série 15 j si pas d'historique.
+function construireGraph(mid){
+  const ctx=document.getElementById("chart");
+  if(chart){ chart.destroy(); chart=null; }
+  if(H && H.mailles[mid]){
+    const m=H.mailles[mid];
+    chart=new Chart(ctx,{
+      data:{ labels:HDATES.map(d=>d.slice(2,7)),
+        datasets:[
+          {type:"line",label:"Indice",data:m.i,yAxisID:"y",borderColor:"#2e7d32",
+           backgroundColor:"rgba(46,125,50,.12)",fill:true,tension:.2,pointRadius:0,borderWidth:1.2},
+          {type:"line",label:"Pluie 15j (mm)",data:m.p,yAxisID:"y2",borderColor:"#1e88e5",
+           borderWidth:0.8,pointRadius:0,tension:.2},
+          {type:"scatter",label:"date",data:HDATES.map(()=>null),yAxisID:"y",
+           borderColor:"#b71c1c",backgroundColor:"#b71c1c",pointRadius:4},
+        ]},
+      options:{responsive:true,maintainAspectRatio:false,animation:false,
+        interaction:{intersect:false,mode:"index"},
+        plugins:{legend:{labels:{boxWidth:12,font:{size:10},filter:it=>it.text!=="date"}}},
+        scales:{ y:{min:0,max:100,title:{display:true,text:"indice",font:{size:9}},ticks:{font:{size:9}}},
+          y2:{position:"right",grid:{drawOnChartArea:false},ticks:{font:{size:9}}},
+          x:{ticks:{font:{size:9},maxRotation:0,autoSkip:true,maxTicksLimit:8}} }}
+    });
+  } else {
+    const serie=(D.mailles[mid].serie)||[];
+    chart=new Chart(ctx,{data:{labels:serie.map(s=>s.date.slice(5)),
+      datasets:[{type:"line",label:"Indice",data:serie.map(s=>s.indice),borderColor:"#2e7d32",
+        backgroundColor:"rgba(46,125,50,.12)",fill:true,tension:.3,pointRadius:2}]},
+      options:{responsive:true,maintainAspectRatio:false,
+        scales:{y:{min:0,max:100,ticks:{font:{size:9}}},x:{ticks:{font:{size:9},maxTicksLimit:6}}}}});
   }
+}
+
+// Met à jour les valeurs du détail + le repère du graphe selon la date courante.
+function majDetailDate(){
+  if(!SELMID) return;
+  const p=D.mailles[SELMID], dyn=dynAt(SELMID);
+  const set=(id,v)=>{const e=document.getElementById(id); if(e) e.textContent=v;};
+  set("d-indice",(dyn.indice!=null?dyn.indice:"—")+" · "+niveauLbl(dyn.indice));
+  set("d-swi",dyn.swi!=null?dyn.swi:"—");
+  set("d-pluie",dyn.pluie!=null?dyn.pluie+" mm":"—");
+  set("d-temp",dyn.temp!=null?dyn.temp+" °C":"—");
+  set("d-date",dyn.live?(dyn.date||"jour courant"):frDate(dyn.date));
+  let faceInd=null;
+  if(SELFACE) faceInd = dyn.live? SELFACE.indice : moduleFace(dyn.indice, SELFACE.expo, dyn.stress);
+  const dv=document.getElementById("d-versant"); if(dv) dv.innerHTML=versantHTML(SELFACE, dyn.indice, faceInd);
+  const note=document.getElementById("d-note");
+  if(note) note.textContent = dyn.live
+    ? "Conditions du jour courant. L'indice anticipe la pousse à ~"+p.lag_jours+" j."
+    : "Conditions SAFRAN au "+frDate(dyn.date)+" (rejeu).";
+  if(chart && H && H.mailles[SELMID] && chart.data.datasets.length>=3){
+    const k = HCUR<0? HDATES.length-1 : HCUR;
+    const arr = HDATES.map(()=>null); arr[k]=H.mailles[SELMID].i[k];
+    chart.data.datasets[2].data=arr; chart.update("none");
+  }
+}
+
+// Top 5 selon la date : live = top serveur (avec versant) ; sinon rang par maille.
+function computeTop(k){
+  const arr=[];
+  for(const mid in H.mailles){ const v=H.mailles[mid].i[k]; if(v==null) continue;
+    const p=D.mailles[mid]||{};
+    arr.push({indice:v,niveau:niveauLbl(v),altitude:p.altitude,
+              geologie:p.geologie_classe,essence:p.essence_dominante}); }
+  arr.sort((a,b)=>b.indice-a.indice); return arr.slice(0,5);
+}
+function remplirTop(){
+  const t=document.getElementById("top-zones"); if(!t) return;
+  let top, titre;
+  if(HCUR<0 || !H){ top=D.top||[]; titre="Meilleurs coins du jour"; }
+  else { top=computeTop(HCUR); titre="Meilleurs coins · "+frDate(HDATES[HCUR]); }
+  t.innerHTML="<h2>"+titre+"</h2>"+top.map(z=>{
+    const v=z.versant && VERSANT_LBL[z.versant]?" · "+VERSANT_LBL[z.versant]:"";
+    return `<div class="row"><span class="dot" style="background:${couleur(z.indice)}"></span>
+     <b>${z.indice}</b> · ${z.niveau} <span class="pill">${Math.round(z.altitude||0)} m · ${z.geologie||""}${z.essence?" · "+(ESSLBL[z.essence]||z.essence):""}${v}</span></div>`;}).join("");
+  const mb=document.getElementById("m-best"); if(mb && top.length) mb.textContent=top[0].indice+" / 100";
+}
+
+// Rafraîchit le volet quand la date change (détail si une maille est ouverte, sinon top).
+function rafraichirVolet(){ if(SELMID) majDetailDate(); else remplirTop(); }
+
+// Vue par défaut : top zones (date-aware) + légende.
+function remplirDefaut(){
+  remplirTop();
   const lg = document.getElementById("legend");
   if(lg){
     lg.innerHTML = "<b>Légende</b>" + NIVEAUX.map(n=>{

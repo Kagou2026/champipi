@@ -17,9 +17,11 @@ from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     ESSENCE_GROUPES, ESSENCE_ORDRE, VERSANT_CLASSES, VERSANT_K,
                     CHOC_K, CHOC_K_CHAUD, CHOC_MIN, CHOC_OPT,
                     CHOC_FENETRE_RECENTE, CHOC_FENETRE_REF,
-                    TEMP_MIN, TEMP_OPT_BAS, TEMP_OPT_HAUT, TEMP_MAX)
+                    TEMP_MIN, TEMP_OPT_BAS, TEMP_OPT_HAUT, TEMP_MAX,
+                    PREV_HORIZON_JOURS, PREV_CAP_SOL_MM)
 from fetch_sim import fetch_sim_features, organiser_par_maille
 from fetch_temp import temperatures_par_maille
+from fetch_prevision import prevision_par_maille
 from compute_index import calcul_indice, niveau, lag_jours, refroidissement, modulation_choc
 from versant import stress_hydrothermique, indice_module
 from backfill_hist import historique_a_jour
@@ -51,6 +53,64 @@ def charger_versant_geom():
             return json.load(fp)
     except FileNotFoundError:
         return {}
+
+
+def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None):
+    """Série d'indice PROJETÉE dans le futur (prévision de sortie).
+
+    Pluie/température/ET0 : prévision Open-Meteo. SWI : projeté par bilan hydrique
+    à partir du dernier SWI connu — SWI(j+1)=clamp(SWI+(pluie−ET0)/CAP,0,1). On
+    ancre de préférence sur le dernier SWI SAFRAN de l'historique (continuité de
+    la timeline), à défaut sur le SWI live SIM.
+    Renvoie {dates, mailles:{mid:{i,s,w,p,t}}} (mêmes clés que l'historique) ou None."""
+    from datetime import date as _date
+    futures = set()
+    for pv in prev_list:
+        futures.update(d for d in pv if d > hist_fin)
+    dates = sorted(futures)[:PREV_HORIZON_JOURS]
+    if not dates:
+        return None
+    hist_m = (historique or {}).get("mailles", {})
+    pos = {d: i for i, d in enumerate(dates)}
+    out = {}
+    for i, cell in enumerate(terrain):
+        mid = cell["maille_id"]; m = mailles.get(mid)
+        pv = prev_list[i] if i < len(prev_list) else {}
+        if not m or not pv:
+            continue
+        coef = m.get("coef_terrain", 1.0)
+        # ancre SWI : dernier SWI SAFRAN de l'historique (continuité) sinon live.
+        w_hist = hist_m.get(mid, {}).get("w") if hist_m else None
+        swi = (w_hist[-1] if w_hist and w_hist[-1] is not None else m.get("swi"))
+        pvdates = sorted(pv)
+        # projection du SWI jour par jour au-delà de l'ancre (hist_fin)
+        swi_by = {}
+        cur = swi
+        for d in pvdates:
+            if d <= hist_fin:
+                swi_by[d] = swi
+                continue
+            pr = pv[d].get("precip"); et = pv[d].get("et0")
+            if cur is not None and pr is not None and et is not None:
+                cur = max(0.0, min(1.0, cur + (pr - et) / PREV_CAP_SOL_MM))
+            swi_by[d] = cur
+        cols = {k: [None] * len(dates) for k in ("i", "s", "w", "p", "t")}
+        for d in dates:
+            dd = _date.fromisoformat(d)
+            p15 = sum(pv[x]["precip"] for x in pvdates
+                      if pv[x]["precip"] is not None
+                      and 0 <= (dd - _date.fromisoformat(x)).days <= 14)
+            tp = pv[d].get("temp"); sw = swi_by.get(d)
+            r = calcul_indice(sw, p15, tp, coef)
+            R = refroidissement([pv[x].get("temp") for x in pvdates if x <= d])
+            k = pos[d]
+            cols["i"][k] = modulation_choc(r["indice"], R, tp)
+            cols["s"][k] = round(stress_hydrothermique(sw, tp), 3) if sw is not None else None
+            cols["w"][k] = round(sw, 3) if sw is not None else None
+            cols["p"][k] = round(p15, 1)
+            cols["t"][k] = round(tp, 1) if tp is not None else None
+        out[mid] = cols
+    return {"dates": dates, "mailles": out}
 
 
 def main():
@@ -131,6 +191,8 @@ def main():
 
         mailles[mid] = {
             "maille_id": mid,
+            "lat": cell.get("lat"),
+            "lon": cell.get("lon"),
             "indice": indice_jour,
             "niveau": niv_jour,
             "swi": dernier.get("swi"),
@@ -238,6 +300,14 @@ def main():
         print(f"    {historique['n_jours']} jours "
               f"({historique['debut']} → {historique['fin']})")
 
+    print("    Prévision de sortie (Open-Meteo)…")
+    hist_fin = historique["fin"] if historique else date_donnees
+    prevision = construire_prevision(terrain, mailles, prevision_par_maille(coords),
+                                     hist_fin, historique)
+    if prevision:
+        print(f"    prévision {prevision['dates'][0]} → {prevision['dates'][-1]} "
+              f"({len(prevision['dates'])} j)")
+
     payload = {
         "genere_le": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M"),
         "date_donnees": date_donnees,
@@ -254,6 +324,7 @@ def main():
         "top": top,
         "mailles": mailles,
         "historique": historique,
+        "prevision": prevision,
         "geojson": {"type": "FeatureCollection", "features": features},
     }
 

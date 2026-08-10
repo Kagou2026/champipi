@@ -214,6 +214,18 @@ CHOC_OPT = 6.0             # °C : refroidissement pleinement "déclencheur" -> 
 CHOC_K = 0.20              # gain côté refroidissement (favorable)
 CHOC_K_CHAUD = 0.10        # gain côté réchauffement (défavorable, plus doux)
 
+# --- Prévision de sortie (indice projeté dans le futur) ---------------------
+# SAFRAN ne prévoit pas le futur → on utilise la prévision Open-Meteo (~16 j)
+# pour la pluie, la température et l'évapotranspiration (ET0). Le SWI, lui, est
+# PROJETÉ par un bilan hydrique simple à partir du SWI actuel (SAFRAN) :
+#   SWI(j+1) = clamp( SWI(j) + (pluie(j) − ET0(j)) / PREV_CAP_SOL_MM , 0, 1 )
+# PREV_CAP_SOL_MM = « capacité » heuristique (mm de bilan net pour faire varier
+# le SWI de 0 à 1). Volontairement simple et explicite : À CALIBRER. La partie
+# « déjà en banque » (jusqu'au lag) reste solide ; au-delà c'est une prévision.
+PREV_HORIZON_JOURS = 16    # nb de jours de prévision exposés
+PREV_PAST_DAYS = 20        # passé récent récupéré (amorçage pluie 15 j / choc)
+PREV_CAP_SOL_MM = 120.0    # capacité sol pour la projection du SWI (heuristique)
+
 # --- Versant / exposition (modulation dynamique de l'indice) ---------------
 # Le versant (ubac/adret) n'est PAS un coefficient statique comme la géologie :
 # son signe s'inverse avec le déficit du moment. Un versant nord (frais,

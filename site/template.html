@@ -36,6 +36,12 @@
   .legend{font-size:12px;color:var(--muted);line-height:1.9;margin-top:14px}
   .legend .li{display:flex;align-items:center;gap:8px}
   .foot{margin-top:16px;font-size:11px;color:var(--muted);line-height:1.6;border-top:1px solid var(--line);padding-top:10px}
+  .synth{background:#eef5ee;border:1px solid #cfe3cf;border-radius:10px;padding:10px 12px;margin:6px 0 12px;font-size:13px;line-height:1.5}
+  .synth:empty{display:none}
+  .synth-t{font-weight:700;margin-bottom:4px}
+  .synth-s{margin-top:4px;color:var(--muted)}
+  .synth-n{margin-top:6px;font-size:11px;color:var(--muted);font-style:italic}
+  .synth b{color:#1b5e20}
   .pill{font-size:11px;padding:2px 8px;border-radius:20px;background:#f0efe9;color:var(--muted)}
   /* Filtre essences (contrôle superposé à la carte) */
   .filtre{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:10px;
@@ -55,12 +61,32 @@
   .rejeu-row{display:flex;align-items:center;gap:6px}
   .rejeu-row2{display:flex;align-items:center;gap:6px;margin-top:6px}
   .rejeu input[type=range]{flex:1;cursor:pointer;accent-color:#2e7d32;min-width:80px}
+  .rj-tag{font-size:10px;color:var(--muted);width:42px;flex:none;text-transform:uppercase;letter-spacing:.03em}
   .rejeu input[type=date]{flex:1;font-size:12px;padding:2px 5px;border:1px solid var(--line);
     border-radius:6px;color:var(--ink);background:#fff;min-width:0}
   .rejeu button{border:1px solid var(--line);background:#faf9f5;border-radius:7px;
     padding:3px 7px;font-size:12px;cursor:pointer;color:var(--ink);line-height:1}
   .rejeu button:hover{background:#f0efe9}
   .rejeu .note{margin-top:5px;font-size:10.5px;color:var(--muted);line-height:1.4}
+  /* Contrôle Cueillettes (observations) */
+  .obsctrl{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:10px;
+    padding:8px 10px;font-size:12px;box-shadow:0 1px 6px rgba(0,0,0,.12);min-width:180px}
+  .obs-h{display:flex;align-items:center;gap:6px;font-weight:650;margin-bottom:6px}
+  .obs-h span{margin-left:auto;background:#f0efe9;border-radius:20px;padding:1px 8px;font-weight:600}
+  .obs-row{display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap}
+  .obsctrl button,.obs-imp{border:1px solid var(--line);background:#faf9f5;border-radius:7px;
+    padding:3px 8px;font-size:12px;cursor:pointer;color:var(--ink);line-height:1}
+  .obsctrl button:hover,.obs-imp:hover{background:#f0efe9}
+  .obs-row label{display:flex;align-items:center;gap:4px;cursor:pointer}
+  .obsform label{display:block;font-size:12px;margin:8px 0 2px;color:var(--muted)}
+  .obsform input,.obsform select,.obsform textarea{width:100%;font-size:13px;padding:5px 7px;
+    border:1px solid var(--line);border-radius:7px;color:var(--ink);background:#fff;box-sizing:border-box}
+  .obsform .rrow{display:flex;align-items:center;gap:10px}
+  .obsform .rval{font-size:20px;font-weight:700;min-width:44px;text-align:center}
+  .obsbtns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .obsbtns button{flex:1;border:1px solid var(--line);border-radius:8px;padding:7px;font-size:13px;cursor:pointer}
+  .obsbtns .ok{background:#2e7d32;color:#fff;border-color:#2e7d32;font-weight:650}
+  .obsbtns .del{background:#fff;color:#b71c1c;border-color:#e0b4b4}
   @media(max-width:760px){main{flex-direction:column}aside{width:100%;max-width:none;border-left:none;border-top:1px solid var(--line);max-height:46%}
     .filtre{max-width:150px;font-size:11px}
     .rejeu{min-width:0;width:calc(100vw - 24px);font-size:11px}}
@@ -85,6 +111,7 @@
           <div class="metric"><div class="k">Moyenne 48</div><div class="v" id="m-moy">—</div></div>
           <div class="metric"><div class="k">Meilleure maille</div><div class="v" id="m-best">—</div></div>
         </div>
+        <div class="synth" id="prev-synth"></div>
         <div class="top" id="top-zones"></div>
         <div class="legend" id="legend"></div>
       </div>
@@ -201,12 +228,42 @@ function moduleFace(base, expo, stress){
 }
 // Historique embarqué : {dates:[...], mailles:{mid:{i:[...],s:[...]}}}.
 const H = (D.historique && D.historique.dates && D.historique.dates.length) ? D.historique : null;
+// Fusion de la PRÉVISION dans la même timeline (passé + futur). FUTURESTART =
+// premier index "futur" (prévision météo, stylé à part).
+let FUTURESTART = H ? H.dates.length : 0;
+if(H && D.prevision && D.prevision.dates && D.prevision.dates.length){
+  const P=D.prevision;
+  H.dates = H.dates.concat(P.dates);
+  for(const mid in H.mailles){
+    const pm = P.mailles[mid];
+    ["i","s","w","p","t"].forEach(c=>{
+      H.mailles[mid][c] = (H.mailles[mid][c]||[]).concat(pm ? pm[c] : P.dates.map(()=>null));
+    });
+  }
+}
 const HDATES = H ? H.dates : [];
+const estFutur = (k)=> k>=FUTURESTART;
 let HCUR = -1;   // -1 = vue du jour (live, valeurs serveur) ; sinon index dans HDATES.
+// Couleurs de la frise temporelle.
+const COL_PASSE="#c2185b", COL_FUTUR="#1e88e5", COL_AUJ="#2e7d32";
+// Index d'aujourd'hui dans la timeline (le plus proche de la date du jour).
+let TODAY_IDX = FUTURESTART;
+if(HDATES.length){
+  const t=new Date(), s=t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0");
+  let bi=0,bd=Infinity; const ts=new Date(s+"T00:00:00Z").getTime();
+  for(let j=0;j<HDATES.length;j++){const dd=Math.abs(new Date(HDATES[j]+"T00:00:00Z").getTime()-ts); if(dd<bd){bd=dd;bi=j;}}
+  TODAY_IDX=bi;
+}
+const colPos=(k)=> k<TODAY_IDX?COL_PASSE : (k>TODAY_IDX?COL_FUTUR:COL_AUJ);
 // Sélection courante dans le volet (maille cliquée) : permet au détail de suivre
 // la date du rejeu. Déclarés ici pour être initialisés avant le contrôle rejeu.
 let SELMID = null, SELFACE = null;
 const DETAIL_HOME = document.getElementById("detail").innerHTML;
+// Recale la carte du rejeu sur une date (défini par le contrôle rejeu, appelé
+// depuis les observations). Reste null si l'historique est absent.
+let allerADate = null;
+// Mode "placer une cueillette" : le prochain clic carte pose un point.
+let pendingCapture = false;
 
 // Moyenne département à l'index k de l'historique.
 function moyenneJour(k){
@@ -244,7 +301,9 @@ Object.keys(parGroupe).forEach(g=>{
   const lyr=L.geoJSON({type:"FeatureCollection",features:parGroupe[g]},{
     style:styleFor,
     onEachFeature:(f,l)=>{
-      l.on("click",()=>{ if(D.mailles[f.properties.maille_id]) ouvrirDetail(f.properties.maille_id, f.properties);});
+      l.on("click",(e)=>{
+        if(pendingCapture){ L.DomEvent.stop(e); finirCapture(e.latlng); return; }
+        if(D.mailles[f.properties.maille_id]) ouvrirDetail(f.properties.maille_id, f.properties);});
       l.on("mouseover",()=>l.setStyle({weight:2.2,fillOpacity:0.9}));
       l.on("mouseout",()=>lyr.resetStyle(l));
     }
@@ -316,9 +375,10 @@ function appliquer(){
     dv.textContent = (D.moyenne_departement!=null?D.moyenne_departement:"—")+" · "+D.niveau_departement;
     dot.style.background = couleur(D.moyenne_departement);
     if(mm) mm.textContent=(D.moyenne_departement!=null?D.moyenne_departement:"—")+" / 100";
-  } else {                          // rejeu historique
+  } else {                          // rejeu historique / aujourd'hui / prévision
     const moy=moyenneJour(HCUR);
-    dd.textContent = "Rejeu du "+frDate(HDATES[HCUR]);
+    const prefixe = HCUR<TODAY_IDX?"Rejeu du " : (HCUR>TODAY_IDX?"Prévision du ":"Aujourd'hui, ");
+    dd.textContent = prefixe+frDate(HDATES[HCUR]);
     dv.textContent = (moy!=null?moy:"—")+" · "+niveauLbl(moy);
     dot.style.background = couleur(moy);
     if(mm) mm.textContent=(moy!=null?moy:"—")+" / 100";
@@ -341,34 +401,47 @@ if(H && HDATES.length>1){
          <button id="rj-play" type="button" title="Lecture / pause">▶</button>
          <button id="rj-dn" type="button" title="+ 1 jour">›</button>
          <button id="rj-mn" type="button" title="+ 1 mois">»</button>
-         <input type="range" id="rj-range" min="0" max="${HDATES.length-1}" value="${HDATES.length-1}" step="1">
+         <button id="rj-now" type="button" title="Revenir à aujourd'hui">⤓</button>
        </div>
+       <div class="rejeu-row"><span class="rj-tag">passé</span>
+         <input type="range" id="rj-past" min="0" max="${TODAY_IDX}" value="${TODAY_IDX}" step="1"></div>
+       <div class="rejeu-row"><span class="rj-tag" style="color:${COL_FUTUR}">à venir</span>
+         <input type="range" id="rj-fut" min="${TODAY_IDX}" max="${HDATES.length-1}" value="${TODAY_IDX}" step="1"></div>
        <div class="rejeu-row2">
-         <input type="date" id="rj-input" min="${HDATES[0]}" max="${HDATES[HDATES.length-1]}" value="${HDATES[HDATES.length-1]}">
-         <button id="rj-now" type="button" title="Revenir au jour courant">⤓ aujourd'hui</button>
+         <input type="date" id="rj-input" min="${HDATES[0]}" max="${HDATES[HDATES.length-1]}" value="${HDATES[TODAY_IDX]}">
        </div>
-       <div class="note">Historique ${frDate(HDATES[0])} → ${frDate(HDATES[HDATES.length-1])} (${HDATES.length} j, source SAFRAN). ‹ › jour · « » mois · ▶ lecture · ⤓ revient au jour courant.</div>`;
+       <div class="note"><b style="color:${COL_AUJ}">vert</b> = aujourd'hui · <b style="color:${COL_PASSE}">magenta</b> = passé · <b style="color:${COL_FUTUR}">bleu</b> = prévision. Piste « à venir » = 15 prochains jours (échelle large).</div>`;
     L.DomEvent.disableClickPropagation(div);
     L.DomEvent.disableScrollPropagation(div);
     return div;
   };
   rc.addTo(map);
-  const range=document.getElementById("rj-range"), lblD=document.getElementById("rj-date"),
-        dateIn=document.getElementById("rj-input"), btnPlay=document.getElementById("rj-play");
+  const rgPast=document.getElementById("rj-past"), rgFut=document.getElementById("rj-fut"),
+        lblD=document.getElementById("rj-date"), dateIn=document.getElementById("rj-input"),
+        btnPlay=document.getElementById("rj-play");
   let timer=null;
   function stopPlay(){ if(timer){clearInterval(timer); timer=null;} btnPlay.textContent="▶"; }
   function setIdx(k){
     k=Math.max(0,Math.min(HDATES.length-1,k)); HCUR=k;
-    range.value=k; dateIn.value=HDATES[k];
-    lblD.textContent=frDate(HDATES[k])+(k===HDATES.length-1?" · dernier relevé":"");
+    rgPast.value=Math.min(k,TODAY_IDX); rgFut.value=Math.max(k,TODAY_IDX);
+    rgPast.style.accentColor = (k<TODAY_IDX?COL_PASSE:COL_AUJ);
+    rgFut.style.accentColor  = (k>TODAY_IDX?COL_FUTUR:COL_AUJ);
+    dateIn.value=HDATES[k];
+    const suff = k<TODAY_IDX?" · passé" : (k>TODAY_IDX?" · prévision":" · aujourd'hui");
+    lblD.textContent=frDate(HDATES[k])+suff; lblD.style.color=colPos(k);
     appliquer();
   }
-  function setLive(){ stopPlay(); HCUR=-1; range.value=HDATES.length-1;
-    dateIn.value=HDATES[HDATES.length-1]; lblD.textContent="aujourd'hui"; appliquer(); }
-  const base=()=> HCUR<0? HDATES.length-1 : HCUR;
+  function setLive(){ stopPlay(); HCUR=-1;
+    rgPast.value=TODAY_IDX; rgFut.value=TODAY_IDX;
+    rgPast.style.accentColor=COL_AUJ; rgFut.style.accentColor=COL_AUJ;
+    dateIn.value=HDATES[TODAY_IDX];
+    lblD.textContent="aujourd'hui"; lblD.style.color=COL_AUJ; appliquer(); }
+  const base=()=> HCUR<0? TODAY_IDX : HCUR;
   const shift=(n)=>{ const d=new Date(HDATES[base()]+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n);
     setIdx(idxProche(d.toISOString().slice(0,10))); };
-  range.addEventListener("input",()=>{stopPlay(); setIdx(+range.value);});
+  allerADate = (ds)=>{ if(ds) setIdx(idxProche(ds)); };   // utilisé par les cueillettes
+  rgPast.addEventListener("input",()=>{stopPlay(); setIdx(+rgPast.value);});
+  rgFut.addEventListener("input",()=>{stopPlay(); setIdx(+rgFut.value);});
   dateIn.addEventListener("change",()=>{stopPlay(); if(dateIn.value) setIdx(idxProche(dateIn.value));});
   document.getElementById("rj-dp").addEventListener("click",()=>{stopPlay(); shift(-1);});
   document.getElementById("rj-dn").addEventListener("click",()=>{stopPlay(); shift(1);});
@@ -382,7 +455,7 @@ if(H && HDATES.length>1){
     setIdx(i);
     timer=setInterval(()=>{ i++; if(i>HDATES.length-1){stopPlay(); return;} setIdx(i); }, 110);
   });
-  // Défaut : vue live du jour (aucune date sélectionnée).
+  // Défaut : vue du jour.
   setLive();
 }
 
@@ -533,7 +606,7 @@ function computeTop(k){
   const arr=[];
   for(const mid in H.mailles){ const v=H.mailles[mid].i[k]; if(v==null) continue;
     const p=D.mailles[mid]||{};
-    arr.push({indice:v,niveau:niveauLbl(v),altitude:p.altitude,
+    arr.push({mid:mid,indice:v,niveau:niveauLbl(v),altitude:p.altitude,
               geologie:p.geologie_classe,essence:p.essence_dominante}); }
   arr.sort((a,b)=>b.indice-a.indice); return arr.slice(0,5);
 }
@@ -552,8 +625,42 @@ function remplirTop(){
 // Rafraîchit le volet quand la date change (détail si une maille est ouverte, sinon top).
 function rafraichirVolet(){ if(SELMID) majDetailDate(); else remplirTop(); }
 
-// Vue par défaut : top zones (date-aware) + légende.
+function addDays(ds,n){ const d=new Date(ds+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+// Synthèse de prévision : prochaine fenêtre favorable + pousse attendue (+lag) + secteurs.
+function fillSynth(){
+  const el=document.getElementById("prev-synth"); if(!el) return;
+  if(!H || FUTURESTART>=HDATES.length){ el.innerHTML=""; return; }
+  const SEUIL=55;
+  let peakK=-1, peakV=-1;
+  for(let k=FUTURESTART;k<HDATES.length;k++){
+    let bv=-1; for(const mid in H.mailles){const v=H.mailles[mid].i[k]; if(v!=null&&v>bv)bv=v;}
+    if(bv>peakV){peakV=bv; peakK=k;}
+  }
+  if(peakV<SEUIL){
+    el.innerHTML=`<div class="synth-t">🍄 Prévision de sortie</div>
+      <div>Pas de fenêtre nettement favorable prévue d'ici le ${frDate(HDATES[HDATES.length-1])} (meilleur indice attendu ${peakV}).</div>
+      <div class="synth-n">Prévision météo — fiabilité décroissante au-delà de ~5–7 j.</div>`;
+    return;
+  }
+  // fenêtre de conditions favorables autour du pic
+  let a=peakK,b=peakK;
+  const bestAt=(k)=>{let bv=-1;for(const mid in H.mailles){const v=H.mailles[mid].i[k];if(v!=null&&v>bv)bv=v;}return bv;};
+  while(a-1>=FUTURESTART && bestAt(a-1)>=SEUIL) a--;
+  while(b+1<HDATES.length && bestAt(b+1)>=SEUIL) b++;
+  const top=computeTop(peakK).slice(0,3);
+  const lag=(top[0]&&D.mailles[top[0].mid]&&D.mailles[top[0].mid].lag_jours)||12;
+  const f1=addDays(HDATES[a],lag), f2=addDays(HDATES[b],lag);
+  const secteurs=top.map(z=>Math.round(z.altitude||0)+" m "+(z.geologie||"")).join(" · ");
+  el.innerHTML=`<div class="synth-t">🍄 Prévision de sortie</div>
+    <div>Conditions favorables prévues <b>${frDate(HDATES[a])}${a!==b?" → "+frDate(HDATES[b]):""}</b> (indice jusqu'à ${peakV}).</div>
+    <div>Pousse attendue ~${lag} j après → <b>${frDate(f1)}${a!==b?" → "+frDate(f2):""}</b>.</div>
+    <div class="synth-s">Meilleurs secteurs : ${secteurs}.</div>
+    <div class="synth-n">Prévision météo — fiabilité décroissante au-delà de ~5–7 j. SWI projeté (bilan hydrique).</div>`;
+}
+
+// Vue par défaut : synthèse prévision + top zones (date-aware) + légende.
 function remplirDefaut(){
+  fillSynth();
   remplirTop();
   const lg = document.getElementById("legend");
   if(lg){
@@ -577,6 +684,206 @@ function remplirFoot(){
      terrain ni la prudence sur la comestibilité.<br>
      Sources : Météo-France/SAFRAN (data.gouv), BRGM, Open-Meteo, IGN (BD Forêt V2, RGE ALTI).`;
 }
+// --- Observations / cueillettes (privé, dans le navigateur) -----------------
+// Stockées en localStorage (jamais envoyées au dépôt public). Affichées sur la
+// carte ; import/export pour sauvegarde et transfert entre appareils.
+const OBS_KEY="champipi_obs_v1";
+let OBS=[];
+function obsLoad(){ try{OBS=JSON.parse(localStorage.getItem(OBS_KEY)||"[]");}catch(e){OBS=[];} }
+function obsSave(){ try{localStorage.setItem(OBS_KEY, JSON.stringify(OBS));}catch(e){alert("Sauvegarde impossible (stockage navigateur).");} }
+const EFFORT={balade:"Balade (passage)", recherche:"Recherche", intensive:"Recherche intensive"};
+const ESPECE={cepe:"Cèpe", autre:"Autre"};
+
+// Rattache un point (lat/lon) à la maille la plus proche (centroïdes embarqués).
+function nearestMaille(lat,lon){
+  let best=null,bd=Infinity;
+  for(const mid in D.mailles){const m=D.mailles[mid]; if(m.lat==null) continue;
+    const dx=m.lat-lat, dy=(m.lon-lon)*Math.cos(lat*Math.PI/180); const d=dx*dx+dy*dy;
+    if(d<bd){bd=d;best=mid;}}
+  return best;
+}
+// Index dans HDATES d'une date (exact sinon plus proche).
+function hIndex(date){ if(!H||!date) return -1; const i=HDATES.indexOf(date); if(i>=0) return i;
+  let best=-1,bd=Infinity; const td=new Date(date+"T00:00:00Z").getTime();
+  for(let j=0;j<HDATES.length;j++){const d=Math.abs(new Date(HDATES[j]+"T00:00:00Z").getTime()-td); if(d<bd){bd=d;best=j;}} return best; }
+
+function couleurObs(r){ if(r==null) return "#777";
+  if(r>=8) return "#1b5e20"; if(r>=5) return "#7cb342"; if(r>=3) return "#f9a825";
+  if(r>=1) return "#ef6c00"; return "#b71c1c"; }
+
+const obsLayer=L.layerGroup().addTo(map);
+function obsRefresh(){
+  obsLayer.clearLayers();
+  const show=document.getElementById("obs-show");
+  if(!show || show.checked){
+    OBS.forEach(o=>{
+      const mk=L.circleMarker([o.lat,o.lon],{radius:7,weight:2,color:"#fff",
+        fillColor:couleurObs(o.result),fillOpacity:0.95});
+      mk.on("click",(e)=>{L.DomEvent.stop(e); montrerObs(o);});
+      mk.bindTooltip(`${o.result}/10 · ${frDate(o.date)}`);
+      obsLayer.addLayer(mk);
+    });
+  }
+  const c=document.getElementById("obs-count"); if(c) c.textContent=OBS.length;
+}
+
+// Capture d'un point
+function armerCapture(){ pendingCapture=true; map.getContainer().style.cursor="crosshair"; }
+function desarmerCapture(){ pendingCapture=false; map.getContainer().style.cursor=""; }
+function finirCapture(latlng){ desarmerCapture(); formulaireObs({lat:+latlng.lat.toFixed(5), lon:+latlng.lng.toFixed(5)}); }
+map.on("click",(e)=>{ if(pendingCapture) finirCapture(e.latlng); });
+function captureGPS(){
+  if(!navigator.geolocation){ alert("Géolocalisation indisponible sur cet appareil."); return; }
+  navigator.geolocation.getCurrentPosition(
+    p=>finirCapture({lat:p.coords.latitude, lng:p.coords.longitude}),
+    ()=>alert("Position GPS indisponible ou refusée."),
+    {enableHighAccuracy:true, timeout:10000});
+}
+
+function aujourdhui(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+
+// Formulaire de saisie / édition
+function formulaireObs(pos, o){
+  desarmerCapture();
+  o = o || {};
+  const lat = o.lat!=null? o.lat : pos.lat, lon = o.lon!=null? o.lon : pos.lon;
+  const el=document.getElementById("detail");
+  el.innerHTML=`
+    <h2 style="margin:0 0 4px">${o.id?"Modifier":"Nouvelle"} cueillette</h2>
+    <p class="hint">Position : ${lat.toFixed(5)}, ${lon.toFixed(5)} · maille ${nearestMaille(lat,lon)}</p>
+    <div class="obsform">
+      <label>Date</label><input type="date" id="o-date" max="${aujourdhui()}" value="${o.date||aujourdhui()}">
+      <label>Résultat de cueillette (0 = rien · 10 = abondant)</label>
+      <div class="rrow"><input type="range" id="o-res" min="0" max="10" step="1" value="${o.result!=null?o.result:0}" style="flex:1">
+        <span class="rval" id="o-resv">${o.result!=null?o.result:0}</span></div>
+      <label>Espèce</label><select id="o-esp">
+        <option value="cepe"${o.espece!=="autre"?" selected":""}>Cèpe</option>
+        <option value="autre"${o.espece==="autre"?" selected":""}>Autre</option></select>
+      <label>Effort de prospection</label><select id="o-eff">
+        <option value="balade"${(o.effort||"recherche")==="balade"?" selected":""}>Balade (passage)</option>
+        <option value="recherche"${(o.effort||"recherche")==="recherche"?" selected":""}>Recherche</option>
+        <option value="intensive"${o.effort==="intensive"?" selected":""}>Recherche intensive</option></select>
+      <label>Note (facultatif)</label><textarea id="o-note" rows="2">${o.note||""}</textarea>
+    </div>
+    <div class="obsbtns">
+      <button class="ok" id="o-save">Enregistrer</button>
+      <button id="o-cancel">Annuler</button>
+    </div>`;
+  document.getElementById("o-res").addEventListener("input",e=>{document.getElementById("o-resv").textContent=e.target.value;});
+  document.getElementById("o-cancel").addEventListener("click",fermerDetail);
+  document.getElementById("o-save").addEventListener("click",()=>{
+    const obs={ id:o.id||("o"+Date.now()), lat, lon,
+      date:document.getElementById("o-date").value||aujourdhui(),
+      result:+document.getElementById("o-res").value,
+      espece:document.getElementById("o-esp").value,
+      effort:document.getElementById("o-eff").value,
+      note:document.getElementById("o-note").value.trim(),
+      saisi_le:new Date().toISOString().slice(0,16).replace("T"," ") };
+    const i=OBS.findIndex(x=>x.id===obs.id);
+    if(i>=0) OBS[i]=obs; else OBS.push(obs);
+    obsSave(); obsRefresh(); montrerObs(obs);
+  });
+}
+
+// Détail d'une cueillette + données de la zone (maille) à sa date
+function montrerObs(o){
+  SELMID=null; SELFACE=null; if(chart){chart.destroy(); chart=null;}
+  const mid=nearestMaille(o.lat,o.lon), p=D.mailles[mid]||{};
+  const k=hIndex(o.date);
+  const geo={acide:"sol acide",neutre:"sol neutre",calcaire:"sol calcaire",inconnu:"sol ?"}[p.geologie_classe]||p.geologie_classe||"—";
+  let zone;
+  if(H && H.mailles[mid] && k>=0){
+    const m=H.mailles[mid];
+    const pred=m.i[k];
+    // Fenêtre de LAG : la pousse reflète le déclencheur ~10-15 j avant. On
+    // remonte le meilleur indice sur la fenêtre précédente (lag selon altitude).
+    const lag = p.lag_jours || 15;
+    let maxPre=null, jbest=k;
+    for(let j=Math.max(0,k-lag); j<=k; j++){ const v=m.i[j];
+      if(v!=null && (maxPre==null || v>maxPre)){ maxPre=v; jbest=j; } }
+    zone=`
+     <div class="metrics">
+       ${metric("Ta cueillette", o.result+" / 10")}
+       ${metric("Indice ce jour-là", (pred!=null?pred:"—")+" · "+niveauLbl(pred))}
+       ${metric("Meilleur indice "+lag+" j avant", (maxPre!=null?maxPre:"—")+" · "+niveauLbl(maxPre))}
+       ${metric("Déclencheur estimé", jbest!==k?frDate(HDATES[jbest]):"le jour même")}
+       ${metric("Humidité (SWI)", m.w&&m.w[k]!=null?m.w[k]:"—")}
+       ${metric("Pluie 15 j", m.p&&m.p[k]!=null?m.p[k]+" mm":"—")}
+       ${metric("Température", m.t&&m.t[k]!=null?m.t[k]+" °C":"—")}
+       ${metric("Altitude · sol", (p.altitude!=null?Math.round(p.altitude)+" m":"—")+" · "+geo)}
+     </div>
+     <p class="hint">La pousse suit le déclencheur avec ~${lag} j de décalage (altitude). On compare donc ta cueillette au <b>meilleur indice des ${lag} j précédents</b> (${maxPre!=null?maxPre:"—"}), pas au seul indice du jour (${pred!=null?pred:"—"}). C'est cet écart, accumulé, qui recalera les coefficients.</p>`;
+  } else {
+    zone=`<p class="hint">Pas de données d'historique pour cette date/zone (hors période couverte).</p>`;
+  }
+  const el=document.getElementById("detail");
+  el.innerHTML=`
+    <div style="display:flex;align-items:center;gap:8px">
+      <button id="o-back" type="button" style="border:1px solid var(--line);background:#faf9f5;border-radius:7px;padding:2px 8px;font-size:12px;cursor:pointer;color:var(--ink)">‹ retour</button>
+      <h2 style="margin:0">Cueillette · ${frDate(o.date)}</h2>
+    </div>
+    <p class="hint" style="margin-top:8px"><span class="dot" style="display:inline-block;background:${couleurObs(o.result)}"></span>
+      <b>${o.result}/10</b> · ${ESPECE[o.espece]||o.espece} · ${EFFORT[o.effort]||o.effort||"—"}${o.note?" · "+o.note:""}</p>
+    <p class="hint">Position ${o.lat.toFixed(5)}, ${o.lon.toFixed(5)} · maille ${mid}</p>
+    ${zone}
+    <div class="obsbtns">
+      ${allerADate?`<button id="o-see">Voir la carte ce jour-là</button>`:""}
+      <button id="o-edit">Modifier</button>
+      <button class="del" id="o-del">Supprimer</button>
+    </div>`;
+  document.getElementById("o-back").addEventListener("click",fermerDetail);
+  document.getElementById("o-edit").addEventListener("click",()=>formulaireObs({lat:o.lat,lon:o.lon},o));
+  document.getElementById("o-del").addEventListener("click",()=>{
+    if(confirm("Supprimer cette cueillette ?")){ OBS=OBS.filter(x=>x.id!==o.id); obsSave(); obsRefresh(); fermerDetail(); }});
+  const see=document.getElementById("o-see"); if(see) see.addEventListener("click",()=>allerADate(o.date));
+}
+
+// Import / export
+function obsExport(){
+  if(!OBS.length){ alert("Aucune cueillette à exporter."); return; }
+  const blob=new Blob([JSON.stringify(OBS,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="champipi_observations.json"; document.body.appendChild(a); a.click(); a.remove();
+}
+function obsImport(file){
+  const r=new FileReader();
+  r.onload=()=>{ try{ const arr=JSON.parse(r.result); if(!Array.isArray(arr)) throw 0;
+    const byId={}; OBS.concat(arr).forEach(o=>{ const key=o.id||[o.date,o.lat,o.lon].join("|"); byId[key]=o; });
+    OBS=Object.values(byId); obsSave(); obsRefresh();
+    alert("Importé : "+arr.length+" cueillette(s). Total : "+OBS.length+".");
+  }catch(e){ alert("Fichier invalide (JSON attendu)."); } };
+  r.readAsText(file);
+}
+
+// Contrôle carte
+const obsCtrl=L.control({position:"topleft"});
+obsCtrl.onAdd=function(){
+  const div=L.DomUtil.create("div","obsctrl");
+  div.innerHTML=`
+    <div class="obs-h">🧺 Cueillettes <span id="obs-count">0</span></div>
+    <div class="obs-row">
+      <button id="obs-add" type="button" title="Cliquer ensuite sur la carte">➕ Placer</button>
+      <button id="obs-gps" type="button" title="Utiliser ma position">📍 GPS</button>
+    </div>
+    <div class="obs-row">
+      <button id="obs-exp" type="button">Exporter</button>
+      <label class="obs-imp">Importer<input type="file" id="obs-imp" accept="application/json" hidden></label>
+      <label><input type="checkbox" id="obs-show" checked> voir</label>
+    </div>`;
+  L.DomEvent.disableClickPropagation(div);
+  L.DomEvent.disableScrollPropagation(div);
+  return div;
+};
+obsCtrl.addTo(map);
+document.getElementById("obs-add").addEventListener("click",()=>{ armerCapture();
+  const b=document.getElementById("obs-add"); b.textContent="Cliquez la carte…"; setTimeout(()=>b.textContent="➕ Placer",2500); });
+document.getElementById("obs-gps").addEventListener("click",captureGPS);
+document.getElementById("obs-exp").addEventListener("click",obsExport);
+document.getElementById("obs-imp").addEventListener("change",e=>{ if(e.target.files[0]) obsImport(e.target.files[0]); e.target.value=""; });
+document.getElementById("obs-show").addEventListener("change",obsRefresh);
+
+obsLoad(); obsRefresh();
+
 remplirDefaut();
 remplirFoot();
 </script>

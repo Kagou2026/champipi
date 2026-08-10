@@ -46,8 +46,21 @@
   .filtre label{display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;line-height:1.2}
   .filtre input{margin:0;cursor:pointer}
   .filtre .sw{width:12px;height:12px;border-radius:3px;background:#2e7d32;flex:none;border:1px solid rgba(0,0,0,.15)}
+  /* Curseur temporel (rejeu des 15 derniers jours) */
+  .rejeu{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:10px;
+    padding:8px 12px;font-size:12px;box-shadow:0 1px 6px rgba(0,0,0,.12);min-width:260px}
+  .rejeu-h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .rejeu-h b{font-weight:650}
+  .rejeu-d{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+  .rejeu-row{display:flex;align-items:center;gap:8px}
+  .rejeu input[type=range]{flex:1;cursor:pointer;accent-color:#2e7d32}
+  .rejeu button{border:1px solid var(--line);background:#faf9f5;border-radius:7px;
+    padding:3px 8px;font-size:12px;cursor:pointer;color:var(--ink)}
+  .rejeu button:hover{background:#f0efe9}
+  .rejeu .note{margin-top:5px;font-size:10.5px;color:var(--muted);line-height:1.4}
   @media(max-width:760px){main{flex-direction:column}aside{width:100%;max-width:none;border-left:none;border-top:1px solid var(--line);max-height:46%}
-    .filtre{max-width:150px;font-size:11px}}
+    .filtre{max-width:150px;font-size:11px}
+    .rejeu{min-width:0;width:calc(100vw - 24px);font-size:11px}}
 </style>
 </head>
 <body>
@@ -129,11 +142,51 @@ const GRP={}, ESSLBL={};
 (D.essence_groupes||[]).forEach(g=>{GRP[g.key]=g; ESSLBL[g.key]=g.label;});
 const alphaOf = k => (GRP[k] ? GRP[k].alpha : 1);
 
-// Style d'un polygone : couleur = indice de la maille ; opacité = étage de
-// l'essence (les essences principales teintent plus fort que le reste).
+// --- Rejeu temporel : reconstruction jour par jour -------------------------
+// Force de la modulation versant, embarquée par le robot (miroir de VERSANT_K).
+const VERSANT_K = (D.versant_k!=null? D.versant_k : 0.40);
+// Indice d'une FACE de forêt = indice de la maille modulé par l'exposition et
+// le stress du jour (réplique de indice_module() côté Python).
+function moduleFace(base, expo, stress){
+  if(base===null||base===undefined) return null;
+  if(expo===null||expo===undefined) return base;
+  let v = base * (1 + VERSANT_K*expo*(stress||0));
+  return Math.round(Math.max(0, Math.min(100, v)));
+}
+// Pour chaque maille : {date -> {indice, stress}} + liste globale des dates.
+const _dates = new Set();
+Object.values(D.mailles||{}).forEach(m=>{
+  m._byDate={};
+  (m.serie||[]).forEach(s=>{ m._byDate[s.date]={indice:s.indice, stress:s.stress}; _dates.add(s.date); });
+});
+const DATES = [...(_dates)].sort();                 // du plus ancien au plus récent
+const LAST_DATE = DATES.length? DATES[DATES.length-1] : null;
+let CURRENT_DATE = LAST_DATE;                        // défaut : aujourd'hui
+// Moyenne département pour une date (moyenne des indices de maille de ce jour).
+function moyenneJour(date){
+  let s=0,n=0;
+  Object.values(D.mailles||{}).forEach(m=>{const r=m._byDate&&m._byDate[date];
+    if(r && r.indice!=null){s+=r.indice; n++;}});
+  return n? Math.round(s/n) : null;
+}
+
+// Indice affiché pour une feature à la date courante (face modulée par versant).
+function indiceAt(f){
+  // Au jour courant, on réutilise la valeur calculée par le robot (identité
+  // exacte avec le rendu serveur) ; pour les jours passés, on module côté client.
+  if(CURRENT_DATE===null || CURRENT_DATE===LAST_DATE) return f.properties.indice;
+  const p=D.mailles[f.properties.maille_id];
+  if(!p) return f.properties.indice;
+  const r=p._byDate[CURRENT_DATE];
+  if(!r) return null;
+  return moduleFace(r.indice, f.properties.expo, r.stress);
+}
+
+// Style d'un polygone : couleur = indice (du jour sélectionné) ; opacité =
+// étage de l'essence (les essences principales teintent plus fort).
 function styleFor(f){
   const g=f.properties.groupe;
-  return {fillColor:couleur(f.properties.indice), weight:0.4, color:"#3d3d36",
+  return {fillColor:couleur(indiceAt(f)), weight:0.4, color:"#3d3d36",
           fillOpacity:BASE_FILL*(g?alphaOf(g):1), opacity:0.4};
 }
 
@@ -202,6 +255,60 @@ if((D.essence_groupes||[]).length){
     const allOn=boxes.every(b=>b.checked);
     boxes.forEach(b=>{b.checked=!allOn; toggle(b.getAttribute("data-g"),b.checked);});
   });
+}
+
+// --- Curseur temporel (rejeu des ~15 derniers jours) -----------------------
+function niveauLbl(indice){
+  if(indice===null||indice===undefined) return "inconnu";
+  return NIVEAUX.find(n=>indice<n.max).label;
+}
+function frDate(d){ if(!d) return ""; const p=d.split("-"); return p.length===3?(p[2]+"/"+p[1]):d; }
+// Applique une date : recolore la carte et met à jour l'en-tête département.
+function appliquerDate(date){
+  CURRENT_DATE = date;
+  Object.values(layersByGroup).forEach(l=>{try{l.setStyle(styleFor);}catch(e){}});
+  const moy = moyenneJour(date);
+  const estAuj = (date === DATES[DATES.length-1]);
+  document.getElementById("dept-date").textContent =
+    estAuj ? (D.date_donnees? "Données du "+D.date_donnees : "") : ("Rejeu du "+frDate(date));
+  document.getElementById("dept-val").textContent = (moy!=null?moy:"—")+" · "+niveauLbl(moy);
+  document.getElementById("dept-dot").style.background = couleur(moy);
+  const mm=document.getElementById("m-moy"); if(mm) mm.textContent=(moy!=null?moy:"—")+" / 100";
+}
+if(DATES.length>1){
+  const rc=L.control({position:"bottomright"});
+  rc.onAdd=function(){
+    const div=L.DomUtil.create("div","rejeu");
+    div.innerHTML =
+      `<div class="rejeu-h">🕒 <b>Rejeu</b><span class="rejeu-d" id="rj-date"></span></div>
+       <div class="rejeu-row">
+         <button id="rj-play" type="button" title="Lecture / pause">▶</button>
+         <input type="range" id="rj-range" min="0" max="${DATES.length-1}" value="${DATES.length-1}" step="1">
+         <button id="rj-now" type="button" title="Revenir à aujourd'hui">⤓</button>
+       </div>
+       <div class="note">Fait défiler l'indice des ${DATES.length} derniers jours (humidité, pluie et température réelles). « Aujourd'hui » = dernier jour disponible.</div>`;
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+    return div;
+  };
+  rc.addTo(map);
+  const range=document.getElementById("rj-range");
+  const lblD=document.getElementById("rj-date");
+  let timer=null;
+  const btnPlay=document.getElementById("rj-play");
+  function stopPlay(){ if(timer){clearInterval(timer); timer=null;} btnPlay.textContent="▶"; }
+  const setIdx=(i)=>{const d=DATES[i]; range.value=i;
+    lblD.textContent=frDate(d)+(i===DATES.length-1?" · aujourd'hui":""); appliquerDate(d);};
+  range.addEventListener("input",()=>{stopPlay(); setIdx(+range.value);});
+  document.getElementById("rj-now").addEventListener("click",()=>{stopPlay(); setIdx(DATES.length-1);});
+  btnPlay.addEventListener("click",()=>{
+    if(timer){stopPlay(); return;}
+    btnPlay.textContent="⏸";
+    let i=+range.value; if(i>=DATES.length-1) i=0;   // au bout : on relance du début
+    setIdx(i);
+    timer=setInterval(()=>{ i++; if(i>DATES.length-1){stopPlay(); return;} setIdx(i); }, 700);
+  });
+  setIdx(DATES.length-1);   // init : aujourd'hui (rendu identique au serveur)
 }
 
 function metric(k,v){return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;}
@@ -291,7 +398,8 @@ function remplirDefaut(){
       return `<div class="li"><span class="dot" style="background:${couleur(n.max-1)}"></span>${n.label}</div>`;
     }).join("") + `<div class="li"><span class="dot" style="background:#9e9e9e"></span>donnée manquante</div>`
     + `<div class="li" style="margin-top:6px">Teinte : essences <b>principales</b> pleines, secondaires atténuées, autres pâles. Filtre en haut à droite de la carte.</div>`
-    + `<div class="li" style="margin-top:6px">Chaque forêt est découpée par <b>versant</b> — ubac (nord, frais/humide) et adret (sud, chaud/sec). L'indice de chaque face est modulé selon la météo du jour : sol sec ou chaud → l'ubac est favorisé, temps froid → l'adret. Cliquez une face pour le détail.</div>`;
+    + `<div class="li" style="margin-top:6px">Chaque forêt est découpée par <b>versant</b> — ubac (nord, frais/humide) et adret (sud, chaud/sec). L'indice de chaque face est modulé selon la météo du jour : sol sec ou chaud → l'ubac est favorisé, temps froid → l'adret. Cliquez une face pour le détail.</div>`
+    + `<div class="li" style="margin-top:6px">Le <b>curseur de rejeu</b> (en bas à droite de la carte) fait défiler l'indice des derniers jours pour suivre son évolution. ▶ lance l'animation, ⤓ revient à aujourd'hui.</div>`;
   }
 }
 function remplirFoot(){

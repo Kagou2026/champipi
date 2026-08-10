@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     SITE_TEMPLATE, SITE_OUTPUT, LAG_JOURS_PLAINE,
-                    ESSENCE_GROUPES, ESSENCE_ORDRE, VERSANT_CLASSES)
+                    ESSENCE_GROUPES, ESSENCE_ORDRE, VERSANT_CLASSES, VERSANT_K)
 from fetch_sim import fetch_sim_features, organiser_par_maille
 from fetch_temp import temperatures_par_maille
 from compute_index import calcul_indice, niveau, lag_jours
@@ -76,7 +76,13 @@ def main():
     indices_jour = []
     for i, cell in enumerate(terrain):
         mid = cell["maille_id"]
-        temp = temps[i] if i < len(temps) else None
+        tinfo = temps[i] if i < len(temps) else {}
+        temp_par_date = tinfo.get("par_date", {}) if tinfo else {}
+        temp_recent = tinfo.get("recent") if tinfo else None
+        # Température d'un jour donné : vraie valeur Open-Meteo du jour, sinon
+        # repli sur la moyenne récente (curseur temporel : chaque jour de la
+        # série doit refléter SA température, plus une valeur figée).
+        temp_du = lambda d: temp_par_date.get(d, temp_recent)
         # Coef terrain = géologie × couverture forestière × essence hôte.
         coef_geo = cell["coef_terrain"]
         coef_foret = cell.get("coef_foret", 1.0)
@@ -84,20 +90,28 @@ def main():
         coef = coef_geo * coef_foret * coef_essence
         hist_sim = sim.get(mid, {}).get("historique", [])
 
-        # Série d'indices sur l'historique (température maintenue = actuelle).
+        # Série d'indices sur l'historique, avec la vraie température de chaque
+        # jour. On embarque aussi `temp` et `stress` du jour : le curseur
+        # temporel recolore chaque face de forêt en modulant l'indice de la
+        # maille par son exposition et le stress DE CE JOUR (cf. versant.py).
         serie = []
         for h in hist_sim:
-            r = calcul_indice(h["swi"], h["pluie_15j"], temp, coef)
+            t_h = temp_du(h["date"])
+            r = calcul_indice(h["swi"], h["pluie_15j"], t_h, coef)
             serie.append({"date": h["date"], "swi": h["swi"],
-                          "pluie_15j": h["pluie_15j"], "indice": r["indice"]})
+                          "pluie_15j": h["pluie_15j"], "temp": t_h,
+                          "indice": r["indice"],
+                          "stress": round(stress_hydrothermique(h["swi"], t_h), 3)})
 
         dernier = hist_sim[-1] if hist_sim else {}
+        temp = temp_du(dernier.get("date"))   # température du jour courant
         res = calcul_indice(dernier.get("swi"), dernier.get("pluie_15j"), temp, coef)
         if res["indice"] is not None:
             indices_jour.append(res["indice"])
 
         # Stress hydro-thermique du jour (+1 sec/chaud, -1 froid/humide) : pilote
-        # le SIGNE de la modulation versant (cf. versant.py).
+        # le SIGNE de la modulation versant (cf. versant.py). Identique au
+        # dernier point de `serie` pour que carte du jour et curseur coïncident.
         stress = stress_hydrothermique(dernier.get("swi"), temp)
 
         mailles[mid] = {
@@ -206,6 +220,7 @@ def main():
         "moyenne_departement": moyenne,
         "niveau_departement": niveau(moyenne),
         "lag_indicatif": LAG_JOURS_PLAINE,
+        "versant_k": VERSANT_K,
         "nb_mailles": len({f["properties"]["maille_id"] for f in features}),
         "essence_groupes": essence_groupes,
         "top": top,

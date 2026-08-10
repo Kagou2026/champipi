@@ -19,6 +19,7 @@ from fetch_sim import fetch_sim_features, organiser_par_maille
 from fetch_temp import temperatures_par_maille
 from compute_index import calcul_indice, niveau, lag_jours
 from versant import stress_hydrothermique, indice_module
+from backfill_hist import historique_a_jour
 
 
 def charger_terrain():
@@ -214,6 +215,15 @@ def main():
         for k in ESSENCE_ORDRE
     ]
 
+    # Historique long (rejeu dans le temps) : SAFRAN 2022→hier, complété du
+    # plus récent disponible. Absent si data/historique.json manque (le curseur
+    # côté page retombe alors sur la série 15 j).
+    print("    Historique (rejeu long)…")
+    historique = historique_a_jour()
+    if historique:
+        print(f"    {historique['n_jours']} jours "
+              f"({historique['debut']} → {historique['fin']})")
+
     payload = {
         "genere_le": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M"),
         "date_donnees": date_donnees,
@@ -225,6 +235,7 @@ def main():
         "essence_groupes": essence_groupes,
         "top": top,
         "mailles": mailles,
+        "historique": historique,
         "geojson": {"type": "FeatureCollection", "features": features},
     }
 

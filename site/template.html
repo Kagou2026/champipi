@@ -46,16 +46,19 @@
   .filtre label{display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;line-height:1.2}
   .filtre input{margin:0;cursor:pointer}
   .filtre .sw{width:12px;height:12px;border-radius:3px;background:#2e7d32;flex:none;border:1px solid rgba(0,0,0,.15)}
-  /* Curseur temporel (rejeu des 15 derniers jours) */
+  /* Curseur temporel (rejeu de l'historique) */
   .rejeu{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:10px;
-    padding:8px 12px;font-size:12px;box-shadow:0 1px 6px rgba(0,0,0,.12);min-width:260px}
+    padding:8px 12px;font-size:12px;box-shadow:0 1px 6px rgba(0,0,0,.12);min-width:320px}
   .rejeu-h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
   .rejeu-h b{font-weight:650}
   .rejeu-d{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
-  .rejeu-row{display:flex;align-items:center;gap:8px}
-  .rejeu input[type=range]{flex:1;cursor:pointer;accent-color:#2e7d32}
+  .rejeu-row{display:flex;align-items:center;gap:6px}
+  .rejeu-row2{display:flex;align-items:center;gap:6px;margin-top:6px}
+  .rejeu input[type=range]{flex:1;cursor:pointer;accent-color:#2e7d32;min-width:80px}
+  .rejeu input[type=date]{flex:1;font-size:12px;padding:2px 5px;border:1px solid var(--line);
+    border-radius:6px;color:var(--ink);background:#fff;min-width:0}
   .rejeu button{border:1px solid var(--line);background:#faf9f5;border-radius:7px;
-    padding:3px 8px;font-size:12px;cursor:pointer;color:var(--ink)}
+    padding:3px 7px;font-size:12px;cursor:pointer;color:var(--ink);line-height:1}
   .rejeu button:hover{background:#f0efe9}
   .rejeu .note{margin-top:5px;font-size:10.5px;color:var(--muted);line-height:1.4}
   @media(max-width:760px){main{flex-direction:column}aside{width:100%;max-width:none;border-left:none;border-top:1px solid var(--line);max-height:46%}
@@ -142,7 +145,7 @@ const GRP={}, ESSLBL={};
 (D.essence_groupes||[]).forEach(g=>{GRP[g.key]=g; ESSLBL[g.key]=g.label;});
 const alphaOf = k => (GRP[k] ? GRP[k].alpha : 1);
 
-// --- Rejeu temporel : reconstruction jour par jour -------------------------
+// --- Rejeu temporel (historique long) --------------------------------------
 // Force de la modulation versant, embarquée par le robot (miroir de VERSANT_K).
 const VERSANT_K = (D.versant_k!=null? D.versant_k : 0.40);
 // Indice d'une FACE de forêt = indice de la maille modulé par l'exposition et
@@ -153,36 +156,29 @@ function moduleFace(base, expo, stress){
   let v = base * (1 + VERSANT_K*expo*(stress||0));
   return Math.round(Math.max(0, Math.min(100, v)));
 }
-// Pour chaque maille : {date -> {indice, stress}} + liste globale des dates.
-const _dates = new Set();
-Object.values(D.mailles||{}).forEach(m=>{
-  m._byDate={};
-  (m.serie||[]).forEach(s=>{ m._byDate[s.date]={indice:s.indice, stress:s.stress}; _dates.add(s.date); });
-});
-const DATES = [...(_dates)].sort();                 // du plus ancien au plus récent
-const LAST_DATE = DATES.length? DATES[DATES.length-1] : null;
-let CURRENT_DATE = LAST_DATE;                        // défaut : aujourd'hui
-// Moyenne département pour une date (moyenne des indices de maille de ce jour).
-function moyenneJour(date){
-  let s=0,n=0;
-  Object.values(D.mailles||{}).forEach(m=>{const r=m._byDate&&m._byDate[date];
-    if(r && r.indice!=null){s+=r.indice; n++;}});
+// Historique embarqué : {dates:[...], mailles:{mid:{i:[...],s:[...]}}}.
+const H = (D.historique && D.historique.dates && D.historique.dates.length) ? D.historique : null;
+const HDATES = H ? H.dates : [];
+let HCUR = -1;   // -1 = vue du jour (live, valeurs serveur) ; sinon index dans HDATES.
+
+// Moyenne département à l'index k de l'historique.
+function moyenneJour(k){
+  if(!H) return null;
+  let s=0,n=0; const M=H.mailles;
+  for(const mid in M){const v=M[mid].i[k]; if(v!=null){s+=v; n++;}}
   return n? Math.round(s/n) : null;
 }
 
-// Indice affiché pour une feature à la date courante (face modulée par versant).
+// Indice affiché pour une feature : vue live (valeurs serveur) ou rejeu (index
+// historique, face modulée par le versant à partir de la série SAFRAN).
 function indiceAt(f){
-  // Au jour courant, on réutilise la valeur calculée par le robot (identité
-  // exacte avec le rendu serveur) ; pour les jours passés, on module côté client.
-  if(CURRENT_DATE===null || CURRENT_DATE===LAST_DATE) return f.properties.indice;
-  const p=D.mailles[f.properties.maille_id];
-  if(!p) return f.properties.indice;
-  const r=p._byDate[CURRENT_DATE];
-  if(!r) return null;
-  return moduleFace(r.indice, f.properties.expo, r.stress);
+  if(HCUR<0 || !H) return f.properties.indice;
+  const m=H.mailles[f.properties.maille_id];
+  if(!m) return null;
+  return moduleFace(m.i[HCUR], f.properties.expo, m.s[HCUR]);
 }
 
-// Style d'un polygone : couleur = indice (du jour sélectionné) ; opacité =
+// Style d'un polygone : couleur = indice (date sélectionnée) ; opacité =
 // étage de l'essence (les essences principales teintent plus fort).
 function styleFor(f){
   const g=f.properties.groupe;
@@ -257,58 +253,89 @@ if((D.essence_groupes||[]).length){
   });
 }
 
-// --- Curseur temporel (rejeu des ~15 derniers jours) -----------------------
+// --- Curseur temporel (rejeu de l'historique) ------------------------------
 function niveauLbl(indice){
   if(indice===null||indice===undefined) return "inconnu";
   return NIVEAUX.find(n=>indice<n.max).label;
 }
-function frDate(d){ if(!d) return ""; const p=d.split("-"); return p.length===3?(p[2]+"/"+p[1]):d; }
-// Applique une date : recolore la carte et met à jour l'en-tête département.
-function appliquerDate(date){
-  CURRENT_DATE = date;
+function frDate(d){ if(!d) return ""; const p=d.split("-"); return p.length===3?(p[2]+"/"+p[1]+"/"+p[0]):d; }
+// Recolore la carte et met à jour l'en-tête selon HCUR.
+function appliquer(){
   Object.values(layersByGroup).forEach(l=>{try{l.setStyle(styleFor);}catch(e){}});
-  const moy = moyenneJour(date);
-  const estAuj = (date === DATES[DATES.length-1]);
-  document.getElementById("dept-date").textContent =
-    estAuj ? (D.date_donnees? "Données du "+D.date_donnees : "") : ("Rejeu du "+frDate(date));
-  document.getElementById("dept-val").textContent = (moy!=null?moy:"—")+" · "+niveauLbl(moy);
-  document.getElementById("dept-dot").style.background = couleur(moy);
-  const mm=document.getElementById("m-moy"); if(mm) mm.textContent=(moy!=null?moy:"—")+" / 100";
+  const dd=document.getElementById("dept-date"), dv=document.getElementById("dept-val"),
+        dot=document.getElementById("dept-dot"), mm=document.getElementById("m-moy");
+  if(HCUR<0){                       // vue live du jour : valeurs serveur
+    dd.textContent = D.date_donnees? "Données du "+D.date_donnees : "";
+    dv.textContent = (D.moyenne_departement!=null?D.moyenne_departement:"—")+" · "+D.niveau_departement;
+    dot.style.background = couleur(D.moyenne_departement);
+    if(mm) mm.textContent=(D.moyenne_departement!=null?D.moyenne_departement:"—")+" / 100";
+  } else {                          // rejeu historique
+    const moy=moyenneJour(HCUR);
+    dd.textContent = "Rejeu du "+frDate(HDATES[HCUR]);
+    dv.textContent = (moy!=null?moy:"—")+" · "+niveauLbl(moy);
+    dot.style.background = couleur(moy);
+    if(mm) mm.textContent=(moy!=null?moy:"—")+" / 100";
+  }
 }
-if(DATES.length>1){
+if(H && HDATES.length>1){
+  // index de la date la plus proche d'une chaîne "YYYY-MM-DD".
+  const idxProche=(s)=>{ if(s<=HDATES[0]) return 0; if(s>=HDATES[HDATES.length-1]) return HDATES.length-1;
+    let lo=0,hi=HDATES.length-1; while(lo<hi){const m=(lo+hi)>>1; if(HDATES[m]<s) lo=m+1; else hi=m;}
+    return (lo>0 && (s-HDATES[lo-1] < HDATES[lo]-s))? lo-1 : lo; };
   const rc=L.control({position:"bottomright"});
   rc.onAdd=function(){
     const div=L.DomUtil.create("div","rejeu");
     div.innerHTML =
-      `<div class="rejeu-h">🕒 <b>Rejeu</b><span class="rejeu-d" id="rj-date"></span></div>
+      `<div class="rejeu-h">🕒 <b>Rejeu</b><span class="rejeu-d" id="rj-date">aujourd'hui</span></div>
        <div class="rejeu-row">
+         <button id="rj-mp" type="button" title="− 1 mois">«</button>
+         <button id="rj-dp" type="button" title="− 1 jour">‹</button>
          <button id="rj-play" type="button" title="Lecture / pause">▶</button>
-         <input type="range" id="rj-range" min="0" max="${DATES.length-1}" value="${DATES.length-1}" step="1">
-         <button id="rj-now" type="button" title="Revenir à aujourd'hui">⤓</button>
+         <button id="rj-dn" type="button" title="+ 1 jour">›</button>
+         <button id="rj-mn" type="button" title="+ 1 mois">»</button>
+         <input type="range" id="rj-range" min="0" max="${HDATES.length-1}" value="${HDATES.length-1}" step="1">
        </div>
-       <div class="note">Fait défiler l'indice des ${DATES.length} derniers jours (humidité, pluie et température réelles). « Aujourd'hui » = dernier jour disponible.</div>`;
+       <div class="rejeu-row2">
+         <input type="date" id="rj-input" min="${HDATES[0]}" max="${HDATES[HDATES.length-1]}" value="${HDATES[HDATES.length-1]}">
+         <button id="rj-now" type="button" title="Revenir au jour courant">⤓ aujourd'hui</button>
+       </div>
+       <div class="note">Historique ${frDate(HDATES[0])} → ${frDate(HDATES[HDATES.length-1])} (${HDATES.length} j, source SAFRAN). ‹ › jour · « » mois · ▶ lecture · ⤓ revient au jour courant.</div>`;
     L.DomEvent.disableClickPropagation(div);
     L.DomEvent.disableScrollPropagation(div);
     return div;
   };
   rc.addTo(map);
-  const range=document.getElementById("rj-range");
-  const lblD=document.getElementById("rj-date");
+  const range=document.getElementById("rj-range"), lblD=document.getElementById("rj-date"),
+        dateIn=document.getElementById("rj-input"), btnPlay=document.getElementById("rj-play");
   let timer=null;
-  const btnPlay=document.getElementById("rj-play");
   function stopPlay(){ if(timer){clearInterval(timer); timer=null;} btnPlay.textContent="▶"; }
-  const setIdx=(i)=>{const d=DATES[i]; range.value=i;
-    lblD.textContent=frDate(d)+(i===DATES.length-1?" · aujourd'hui":""); appliquerDate(d);};
+  function setIdx(k){
+    k=Math.max(0,Math.min(HDATES.length-1,k)); HCUR=k;
+    range.value=k; dateIn.value=HDATES[k];
+    lblD.textContent=frDate(HDATES[k])+(k===HDATES.length-1?" · dernier relevé":"");
+    appliquer();
+  }
+  function setLive(){ stopPlay(); HCUR=-1; range.value=HDATES.length-1;
+    dateIn.value=HDATES[HDATES.length-1]; lblD.textContent="aujourd'hui"; appliquer(); }
+  const base=()=> HCUR<0? HDATES.length-1 : HCUR;
+  const shift=(n)=>{ const d=new Date(HDATES[base()]+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n);
+    setIdx(idxProche(d.toISOString().slice(0,10))); };
   range.addEventListener("input",()=>{stopPlay(); setIdx(+range.value);});
-  document.getElementById("rj-now").addEventListener("click",()=>{stopPlay(); setIdx(DATES.length-1);});
+  dateIn.addEventListener("change",()=>{stopPlay(); if(dateIn.value) setIdx(idxProche(dateIn.value));});
+  document.getElementById("rj-dp").addEventListener("click",()=>{stopPlay(); shift(-1);});
+  document.getElementById("rj-dn").addEventListener("click",()=>{stopPlay(); shift(1);});
+  document.getElementById("rj-mp").addEventListener("click",()=>{stopPlay(); shift(-30);});
+  document.getElementById("rj-mn").addEventListener("click",()=>{stopPlay(); shift(30);});
+  document.getElementById("rj-now").addEventListener("click",setLive);
   btnPlay.addEventListener("click",()=>{
     if(timer){stopPlay(); return;}
     btnPlay.textContent="⏸";
-    let i=+range.value; if(i>=DATES.length-1) i=0;   // au bout : on relance du début
+    let i=base(); if(i>=HDATES.length-1) i=0;   // au bout : relance du début
     setIdx(i);
-    timer=setInterval(()=>{ i++; if(i>DATES.length-1){stopPlay(); return;} setIdx(i); }, 700);
+    timer=setInterval(()=>{ i++; if(i>HDATES.length-1){stopPlay(); return;} setIdx(i); }, 110);
   });
-  setIdx(DATES.length-1);   // init : aujourd'hui (rendu identique au serveur)
+  // Défaut : vue live du jour (aucune date sélectionnée).
+  setLive();
 }
 
 function metric(k,v){return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;}
@@ -399,7 +426,7 @@ function remplirDefaut(){
     }).join("") + `<div class="li"><span class="dot" style="background:#9e9e9e"></span>donnée manquante</div>`
     + `<div class="li" style="margin-top:6px">Teinte : essences <b>principales</b> pleines, secondaires atténuées, autres pâles. Filtre en haut à droite de la carte.</div>`
     + `<div class="li" style="margin-top:6px">Chaque forêt est découpée par <b>versant</b> — ubac (nord, frais/humide) et adret (sud, chaud/sec). L'indice de chaque face est modulé selon la météo du jour : sol sec ou chaud → l'ubac est favorisé, temps froid → l'adret. Cliquez une face pour le détail.</div>`
-    + `<div class="li" style="margin-top:6px">Le <b>curseur de rejeu</b> (en bas à droite de la carte) fait défiler l'indice des derniers jours pour suivre son évolution. ▶ lance l'animation, ⤓ revient à aujourd'hui.</div>`;
+    + `<div class="li" style="margin-top:6px">Le <b>rejeu</b> (en bas à droite de la carte) permet de <b>remonter dans le temps</b> sur plusieurs années : curseur, saut jour/mois, choix d'une date, ▶ animation. ⤓ revient au jour courant. Utile pour comparer l'indice à ce que tu as réellement observé en forêt.</div>`;
   }
 }
 function remplirFoot(){

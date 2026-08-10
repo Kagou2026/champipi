@@ -14,10 +14,13 @@ from datetime import datetime, timezone
 
 from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     SITE_TEMPLATE, SITE_OUTPUT, LAG_JOURS_PLAINE,
-                    ESSENCE_GROUPES, ESSENCE_ORDRE, VERSANT_CLASSES, VERSANT_K)
+                    ESSENCE_GROUPES, ESSENCE_ORDRE, VERSANT_CLASSES, VERSANT_K,
+                    CHOC_K, CHOC_K_CHAUD, CHOC_MIN, CHOC_OPT,
+                    CHOC_FENETRE_RECENTE, CHOC_FENETRE_REF,
+                    TEMP_MIN, TEMP_OPT_BAS, TEMP_OPT_HAUT, TEMP_MAX)
 from fetch_sim import fetch_sim_features, organiser_par_maille
 from fetch_temp import temperatures_par_maille
-from compute_index import calcul_indice, niveau, lag_jours
+from compute_index import calcul_indice, niveau, lag_jours, refroidissement, modulation_choc
 from versant import stress_hydrothermique, indice_module
 from backfill_hist import historique_a_jour
 
@@ -91,24 +94,35 @@ def main():
         coef = coef_geo * coef_foret * coef_essence
         hist_sim = sim.get(mid, {}).get("historique", [])
 
+        # Série de température moyenne (Open-Meteo) pour le CHOC THERMIQUE :
+        # un refroidissement récent déclenche la fructification (cf. compute_index).
+        temp_dates = sorted(temp_par_date)
+        def R_at(d):
+            if not d:
+                return None
+            return refroidissement([temp_par_date[x] for x in temp_dates if x <= d])
+
         # Série d'indices sur l'historique, avec la vraie température de chaque
-        # jour. On embarque aussi `temp` et `stress` du jour : le curseur
-        # temporel recolore chaque face de forêt en modulant l'indice de la
-        # maille par son exposition et le stress DE CE JOUR (cf. versant.py).
+        # jour, l'indice MODULÉ par le choc thermique du jour, et `stress` pour
+        # que le curseur recolore chaque face de forêt (versant) par jour.
         serie = []
         for h in hist_sim:
             t_h = temp_du(h["date"])
             r = calcul_indice(h["swi"], h["pluie_15j"], t_h, coef)
+            ind_h = modulation_choc(r["indice"], R_at(h["date"]), t_h)
             serie.append({"date": h["date"], "swi": h["swi"],
                           "pluie_15j": h["pluie_15j"], "temp": t_h,
-                          "indice": r["indice"],
+                          "indice": ind_h,
                           "stress": round(stress_hydrothermique(h["swi"], t_h), 3)})
 
         dernier = hist_sim[-1] if hist_sim else {}
         temp = temp_du(dernier.get("date"))   # température du jour courant
         res = calcul_indice(dernier.get("swi"), dernier.get("pluie_15j"), temp, coef)
-        if res["indice"] is not None:
-            indices_jour.append(res["indice"])
+        # Indice du jour modulé par le choc thermique (refroidissement récent).
+        indice_jour = modulation_choc(res["indice"], R_at(dernier.get("date")), temp)
+        niv_jour = niveau(indice_jour)
+        if indice_jour is not None:
+            indices_jour.append(indice_jour)
 
         # Stress hydro-thermique du jour (+1 sec/chaud, -1 froid/humide) : pilote
         # le SIGNE de la modulation versant (cf. versant.py). Identique au
@@ -117,8 +131,8 @@ def main():
 
         mailles[mid] = {
             "maille_id": mid,
-            "indice": res["indice"],
-            "niveau": res["niveau"],
+            "indice": indice_jour,
+            "niveau": niv_jour,
             "swi": dernier.get("swi"),
             "pluie_15j": dernier.get("pluie_15j"),
             "anomalie_swi": dernier.get("anomalie_swi"),
@@ -151,7 +165,7 @@ def main():
         if par_groupe_v:
             for grp, faces in par_groupe_v.items():
                 for classe, o in faces.items():
-                    ind = indice_module(res["indice"], o["expo"], stress)
+                    ind = indice_module(indice_jour, o["expo"], stress)
                     features.append({
                         "type": "Feature", "geometry": o["geom"],
                         "properties": {"maille_id": mid, "indice": ind,
@@ -172,13 +186,13 @@ def main():
             for grp, geom in par_groupe.items():
                 features.append({
                     "type": "Feature", "geometry": geom,
-                    "properties": {"maille_id": mid, "indice": res["indice"],
+                    "properties": {"maille_id": mid, "indice": indice_jour,
                                    "groupe": grp, "versant": None},
                 })
         else:
             features.append({
                 "type": "Feature", "geometry": cell["geometry"],
-                "properties": {"maille_id": mid, "indice": res["indice"],
+                "properties": {"maille_id": mid, "indice": indice_jour,
                                "groupe": None, "versant": None},
             })
 
@@ -231,6 +245,10 @@ def main():
         "niveau_departement": niveau(moyenne),
         "lag_indicatif": LAG_JOURS_PLAINE,
         "versant_k": VERSANT_K,
+        "choc": {"k": CHOC_K, "k_chaud": CHOC_K_CHAUD, "min": CHOC_MIN,
+                 "opt": CHOC_OPT, "recent": CHOC_FENETRE_RECENTE,
+                 "ref": CHOC_FENETRE_REF, "tmin": TEMP_MIN, "tob": TEMP_OPT_BAS,
+                 "toh": TEMP_OPT_HAUT, "tmax": TEMP_MAX},
         "nb_mailles": len({f["properties"]["maille_id"] for f in features}),
         "essence_groupes": essence_groupes,
         "top": top,

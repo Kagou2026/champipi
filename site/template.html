@@ -148,6 +148,49 @@ const alphaOf = k => (GRP[k] ? GRP[k].alpha : 1);
 // --- Rejeu temporel (historique long) --------------------------------------
 // Force de la modulation versant, embarquée par le robot (miroir de VERSANT_K).
 const VERSANT_K = (D.versant_k!=null? D.versant_k : 0.40);
+// Paramètres du choc thermique (miroir de config.py), pour l'affichage du détail.
+const CH = D.choc || {k:0.20,k_chaud:0.10,min:2,opt:6,recent:4,ref:7};
+// Refroidissement R (°C) à l'index k d'une série de températures : moyenne de la
+// fenêtre de référence (avant) moins la fenêtre récente. Réplique de compute_index.
+function refroidissementJS(ts, k){
+  if(!ts) return null;
+  const moy=(a,b)=>{let s=0,n=0;for(let j=Math.max(0,a);j<=b;j++){const v=ts[j];if(v!=null){s+=v;n++;}}return n?s/n:null;};
+  const rec=moy(k-CH.recent+1,k), ref=moy(k-CH.recent-CH.ref+1,k-CH.recent);
+  if(rec==null||ref==null) return null;
+  return ref-rec;
+}
+function scoreChocJS(R){ if(R==null) return 0; const x=Math.abs(R);
+  const s = x<=CH.min?0 : x>=CH.opt?1 : (x-CH.min)/(CH.opt-CH.min);
+  return R>0? s : -s; }
+// Viabilité thermique (cloche, réplique de score_temperature) : 0 hors plage.
+function scoreTempJS(t){
+  if(t==null) return 0;
+  if(t<=CH.tmin || t>=CH.tmax) return 0;
+  if(t<CH.tob) return (t-CH.tmin)/(CH.tob-CH.tmin);
+  if(t<=CH.toh) return 1;
+  return (CH.tmax-t)/(CH.tmax-CH.toh);
+}
+// Effet net du choc sur l'indice (%). Le refroidissement (positif) est gaté par
+// la viabilité thermique : un plongeon vers le gel ne déclenche rien.
+function effetChoc(R, temp){
+  let s=scoreChocJS(R);
+  if(s>0) s*=scoreTempJS(temp);
+  return Math.round((s>=0?CH.k:CH.k_chaud)*s*100);
+}
+function chocHTML(R, temp){
+  if(R==null) return "";
+  const eff=effetChoc(R, temp);
+  if(Math.abs(R)<CH.min || eff===0){
+    const cause = (R>0 && scoreTempJS(temp)===0) ? "température hors plage viable"
+                 : "trop faible pour peser";
+    return `<p class="hint" style="border-left:3px solid #8a8a80;padding-left:8px">Choc thermique : ${R>0?"refroidissement":"réchauffement"} de ${Math.abs(R).toFixed(1)} °C — ${cause}.</p>`;
+  }
+  const fav=eff>0, col=fav?"#1565c0":"#b2182b";
+  return `<p class="hint" style="border-left:3px solid ${col};padding-left:8px">
+     Choc thermique : <b>${R>0?"refroidissement":"réchauffement"} de ${Math.abs(R).toFixed(1)} °C</b>
+     (moyenne ${CH.recent} j récents vs ${CH.ref} j avant) → indice <b>${eff>0?"+":""}${eff}%</b>
+     (${fav?"favorable, déclencheur de pousse":"défavorable"}).</p>`;
+}
 // Indice d'une FACE de forêt = indice de la maille modulé par l'exposition et
 // le stress du jour (réplique de indice_module() côté Python).
 function moduleFace(base, expo, stress){
@@ -393,6 +436,7 @@ function ouvrirDetail(mid, face){
     </div>
     <p class="hint" style="margin-top:8px">${p.geologie_descr||""}${p.coef_geologie!=null&&p.coef_geologie<0.5?" — terrain défavorable au cèpe (calcaire).":""}${p.coef_foret!=null&&p.coef_foret<0.6?" — maille peu boisée.":""}${p.coef_essence!=null&&p.coef_essence<0.6?" — essences peu favorables.":""}</p>
     <div id="d-versant"></div>
+    <div id="d-choc"></div>
     <div class="metrics">
       ${metric("Indice cèpe","—","d-indice")}
       ${metric("Boisement",p.taux_boise!=null?Math.round(p.taux_boise*100)+" %":"—")}
@@ -469,6 +513,10 @@ function majDetailDate(){
   let faceInd=null;
   if(SELFACE) faceInd = dyn.live? SELFACE.indice : moduleFace(dyn.indice, SELFACE.expo, dyn.stress);
   const dv=document.getElementById("d-versant"); if(dv) dv.innerHTML=versantHTML(SELFACE, dyn.indice, faceInd);
+  const dc=document.getElementById("d-choc");
+  if(dc){ const ts=(H && H.mailles[SELMID])? H.mailles[SELMID].t : null;
+    const k = HCUR<0? HDATES.length-1 : HCUR;
+    dc.innerHTML = chocHTML(refroidissementJS(ts,k), dyn.temp); }
   const note=document.getElementById("d-note");
   if(note) note.textContent = dyn.live
     ? "Conditions du jour courant. L'indice anticipe la pousse à ~"+p.lag_jours+" j."
@@ -524,7 +572,8 @@ function remplirFoot(){
     `Généré le ${D.genere_le} · ${D.nb_mailles} mailles de 8 km.<br>
      Indice indicatif combinant humidité du sol (SWI), pluie sur 15 j et température,
      pondéré par la géologie, le boisement et l'essence hôte, puis <b>modulé par le versant</b>
-     (ubac/adret, MNT IGN RGE ALTI 10 m) selon la météo du jour. Il ne remplace pas l'observation de
+     (ubac/adret, MNT IGN RGE ALTI 10 m) et par le <b>choc thermique</b> (refroidissement récent,
+     déclencheur de pousse) selon la météo du jour. Il ne remplace pas l'observation de
      terrain ni la prudence sur la comestibilité.<br>
      Sources : Météo-France/SAFRAN (data.gouv), BRGM, Open-Meteo, IGN (BD Forêt V2, RGE ALTI).`;
 }

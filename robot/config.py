@@ -193,6 +193,27 @@ LAG_JOURS_PLAINE = 10
 LAG_JOURS_ALTITUDE = 15
 ALTITUDE_SEUIL = 1000  # au-dessus, on applique le lag "altitude"
 
+# --- Choc thermique (modulation dynamique par le REFROIDISSEMENT récent) ----
+# Ce n'est pas le NIVEAU de température (déjà géré par la cloche score_temperature)
+# mais sa DYNAMIQUE : un refroidissement net sur quelques jours est un déclencheur
+# reconnu de la fructification (les premières nuits fraîches d'arrière-saison).
+# On mesure le refroidissement R (°C) = moyenne de la température de la fenêtre de
+# RÉFÉRENCE (jours -10..-4) MOINS celle de la fenêtre RÉCENTE (jours -3..0) :
+#   R > 0  -> il a refroidi (favorable)     R < 0 -> il a réchauffé (défavorable)
+# puis on module l'indice de la maille :  indice *= 1 + CHOC_K * score_choc(R),
+# où score_choc ∈ [-1, +1] (rampe sur |R| entre CHOC_MIN et CHOC_OPT, signée).
+# La modulation étant MULTIPLICATIVE, elle ne fait rien quand l'indice de base est
+# déjà ~0 (sol sec) : un coup de froid sur sol sec ne crée pas de pousse.
+CHOC_FENETRE_RECENTE = 4   # nb de jours "récents" (dont le jour courant) moyennés
+CHOC_FENETRE_REF = 7       # nb de jours de la fenêtre de référence, juste avant
+CHOC_MIN = 2.0             # °C : en dessous, refroidissement non significatif -> 0
+CHOC_OPT = 6.0             # °C : refroidissement pleinement "déclencheur" -> 1
+# Force de la modulation (± sur l'indice). Modérée : le choc AFFINE, il ne pilote
+# pas. Le côté réchauffement pénalise plus doucement (évite de double-compter la
+# cloche de température). À CALIBRER sur les observations de terrain.
+CHOC_K = 0.20              # gain côté refroidissement (favorable)
+CHOC_K_CHAUD = 0.10        # gain côté réchauffement (défavorable, plus doux)
+
 # --- Versant / exposition (modulation dynamique de l'indice) ---------------
 # Le versant (ubac/adret) n'est PAS un coefficient statique comme la géologie :
 # son signe s'inverse avec le déficit du moment. Un versant nord (frais,

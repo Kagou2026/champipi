@@ -17,6 +17,8 @@ from config import (
     TEMP_MIN, TEMP_OPT_BAS, TEMP_OPT_HAUT, TEMP_MAX,
     POIDS_HUMIDITE, POIDS_PLUIE, POIDS_TEMPERATURE,
     LAG_JOURS_PLAINE, LAG_JOURS_ALTITUDE, ALTITUDE_SEUIL,
+    CHOC_FENETRE_RECENTE, CHOC_FENETRE_REF, CHOC_MIN, CHOC_OPT,
+    CHOC_K, CHOC_K_CHAUD,
 )
 
 
@@ -71,6 +73,63 @@ def lag_jours(altitude):
     if altitude is not None and altitude >= ALTITUDE_SEUIL:
         return LAG_JOURS_ALTITUDE
     return LAG_JOURS_PLAINE
+
+
+def refroidissement(temps):
+    """Refroidissement R (°C) sur les derniers jours d'une série de températures
+    MOYENNES quotidiennes (ordre chronologique, le jour courant en dernier).
+
+    R = moyenne(fenêtre de référence, jours -10..-4) − moyenne(fenêtre récente,
+    jours -3..0). R > 0 = il a refroidi (favorable), R < 0 = réchauffement.
+    Renvoie None si l'on n'a pas assez de jours renseignés dans chaque fenêtre.
+    """
+    vals = [t for t in temps if t is not None]
+    if len(vals) < CHOC_FENETRE_RECENTE + 2:
+        return None
+    recents = vals[-CHOC_FENETRE_RECENTE:]
+    ref = vals[-(CHOC_FENETRE_RECENTE + CHOC_FENETRE_REF):-CHOC_FENETRE_RECENTE]
+    if len(recents) < 2 or len(ref) < 3:
+        return None
+    return sum(ref) / len(ref) - sum(recents) / len(recents)
+
+
+def score_choc(R):
+    """Score de choc thermique dans [-1, +1] à partir du refroidissement R (°C).
+
+    Rampe sur |R| entre CHOC_MIN (zone morte) et CHOC_OPT ; signe + si
+    refroidissement (favorable), − si réchauffement (défavorable)."""
+    if R is None:
+        return 0.0
+    x = abs(R)
+    if x <= CHOC_MIN:
+        s = 0.0
+    elif x >= CHOC_OPT:
+        s = 1.0
+    else:
+        s = (x - CHOC_MIN) / (CHOC_OPT - CHOC_MIN)
+    return s if R > 0 else -s
+
+
+def modulation_choc(indice, R, temp=None):
+    """Applique le choc thermique à l'indice de la maille (multiplicatif, borné).
+
+    Gain asymétrique : CHOC_K côté refroidissement, CHOC_K_CHAUD (plus doux) côté
+    réchauffement (évite de double-compter la cloche de température).
+
+    GARDE-FOU biologique : le bonus de refroidissement n'est accordé que s'il
+    ABOUTIT dans une fenêtre de température viable — un refroidissement qui plonge
+    vers le gel (ou une valeur hors plage) n'est pas un déclencheur de pousse. On
+    pondère donc le score POSITIF par score_temperature(temp) (0 hors plage). Le
+    côté réchauffement n'est pas atténué (un coup de chaud reste défavorable)."""
+    if indice is None:
+        return indice
+    s = score_choc(R)
+    if s > 0:
+        st = score_temperature(temp)
+        s *= (st if st is not None else 0.0)
+    k = CHOC_K if s >= 0 else CHOC_K_CHAUD
+    v = indice * (1 + k * s)
+    return int(round(max(0.0, min(100.0, v))))
 
 
 def calcul_indice(swi, pluie_15j, temp, coef_terrain):

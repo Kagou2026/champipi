@@ -26,7 +26,7 @@ import requests
 
 sys.path.insert(0, "robot")  # permet l'import direct quand lancé depuis la racine
 from config import TERRAIN_FILE  # noqa: E402
-from compute_index import calcul_indice  # noqa: E402
+from compute_index import calcul_indice, refroidissement, modulation_choc  # noqa: E402
 from versant import stress_hydrothermique  # noqa: E402
 
 DATASET_API = ("https://www.data.gouv.fr/api/1/datasets/"
@@ -136,6 +136,7 @@ def series_par_maille(data, coef, debut=DEBUT):
     out = {}
     for mid, jours in data.items():
         dates = sorted(jours)
+        tlist = [jours[x]["t"] for x in dates]   # série de température (chrono)
         s = {}
         for i, d in enumerate(dates):
             if d < debut:
@@ -145,7 +146,10 @@ def series_par_maille(data, coef, debut=DEBUT):
                           if jours[x]["pluie"] is not None)
             swi = jours[d]["swi"]; t = jours[d]["t"]
             r = calcul_indice(swi, pluie15, t, coef.get(mid, 1.0))
-            s[d] = (r["indice"], round(stress_hydrothermique(swi, t), 3),
+            # Choc thermique : refroidissement sur la série jusqu'à ce jour.
+            R = refroidissement(tlist[:i + 1])
+            indice = modulation_choc(r["indice"], R, t)
+            s[d] = (indice, round(stress_hydrothermique(swi, t), 3),
                     None if swi is None else round(swi, 3),
                     round(pluie15, 1),
                     None if t is None else round(t, 1))

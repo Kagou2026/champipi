@@ -87,9 +87,84 @@
   .obsbtns button{flex:1;border:1px solid var(--line);border-radius:8px;padding:7px;font-size:13px;cursor:pointer}
   .obsbtns .ok{background:#2e7d32;color:#fff;border-color:#2e7d32;font-weight:650}
   .obsbtns .del{background:#fff;color:#b71c1c;border-color:#e0b4b4}
-  @media(max-width:760px){main{flex-direction:column}aside{width:100%;max-width:none;border-left:none;border-top:1px solid var(--line);max-height:46%}
-    .filtre{max-width:150px;font-size:11px}
-    .rejeu{min-width:0;width:calc(100vw - 24px);font-size:11px}}
+  /* Poignée de la feuille glissante (masquée sur bureau) */
+  .sheet-handle{display:none}
+  /* Enveloppe des contrôles repliables : transparente sur bureau */
+  .mob-body{display:contents}
+  .mob-toggle{display:none}
+
+  /* ====================== MOBILE ====================== */
+  @media(max-width:760px){
+    header{padding:9px 14px;gap:8px}
+    header h1{font-size:16px}
+    .dept{font-size:12px;gap:6px}
+
+    /* La carte occupe tout l'espace ; la feuille se superpose. */
+    main{display:block;position:relative}
+    #map{position:absolute;inset:0;height:100%}
+
+    /* --- Feuille glissante (bottom sheet) --- */
+    aside{
+      position:fixed;left:0;right:0;bottom:0;top:auto;width:100%;max-width:none;
+      height:88vh;border-left:none;border-top:none;border-radius:16px 16px 0 0;
+      box-shadow:0 -4px 24px rgba(0,0,0,.18);padding:0 16px 24px;
+      transform:translateY(calc(88vh - 104px));  /* réduite : ~104px visibles */
+      transition:transform .28s cubic-bezier(.4,0,.2,1);z-index:1200;
+      overflow:hidden;touch-action:none;
+    }
+    aside.dragging{transition:none}
+    aside.half{transform:translateY(46vh)}
+    aside.full{transform:translateY(0)}
+    /* Contenu défilable seulement quand la feuille est ouverte. */
+    #detail,#foot{overflow-y:auto}
+    aside.full #detail{max-height:calc(88vh - 64px);overflow-y:auto}
+    aside.half #detail{max-height:38vh;overflow-y:auto}
+
+    .sheet-handle{
+      display:block;position:sticky;top:0;background:var(--panel);
+      padding:10px 0 8px;cursor:grab;z-index:2;touch-action:none;
+    }
+    .sheet-handle::before{
+      content:"";display:block;width:44px;height:5px;border-radius:3px;
+      background:#cfcdc4;margin:0 auto;
+    }
+
+    /* Cibles tactiles plus grandes dans le panneau */
+    .metrics{gap:10px}
+    .metric{padding:11px 12px}
+    .metric .v{font-size:20px}
+    .top .row{padding:9px 0}
+    .obsbtns button,.obsform input,.obsform select,.obsform textarea{
+      padding:11px;font-size:15px}
+    #d-back,#o-back{padding:8px 12px!important;font-size:14px!important}
+
+    /* --- Contrôles repliés en boutons-icônes --- */
+    .leaflet-top,.leaflet-bottom{z-index:1100}
+    /* Remonter les contrôles du bas au-dessus de la feuille réduite */
+    .leaflet-bottom{bottom:112px}
+    .leaflet-control-layers{margin-bottom:6px!important}
+
+    .mob-collapse{
+      padding:0!important;min-width:0!important;width:auto!important;
+      border-radius:27px!important;box-shadow:0 2px 8px rgba(0,0,0,.22)!important;
+    }
+    .mob-collapse .mob-body{display:none}
+    .mob-toggle{
+      display:flex;align-items:center;justify-content:center;
+      width:46px;height:46px;font-size:22px;line-height:1;
+      border:none;background:transparent;cursor:pointer;padding:0;border-radius:27px;
+    }
+    .mob-collapse.open{
+      padding:10px 12px!important;border-radius:14px!important;
+      max-width:78vw!important;width:auto!important;
+    }
+    .mob-collapse.open .mob-body{display:block;max-height:52vh;overflow:auto}
+    .mob-collapse.open .mob-toggle{
+      width:100%;height:auto;justify-content:flex-end;padding:0 0 6px;font-size:18px;
+    }
+    .mob-collapse.open .mob-toggle::after{content:"✕";margin-left:6px;color:var(--muted);font-size:15px}
+    .rejeu.mob-collapse.open{min-width:0;width:78vw!important}
+  }
 </style>
 </head>
 <body>
@@ -104,6 +179,7 @@
   <main>
     <div id="map"></div>
     <aside>
+      <div class="sheet-handle" id="sheet-handle" title="Glisser pour ouvrir/fermer"></div>
       <div id="detail">
         <h2>Indice du jour</h2>
         <p class="hint">Cliquez une maille sur la carte pour voir son indice cèpe, ses composantes et l'évolution sur 15 jours.</p>
@@ -886,6 +962,75 @@ obsLoad(); obsRefresh();
 
 remplirDefaut();
 remplirFoot();
+
+// ============================================================================
+// Ergonomie mobile : feuille glissante + contrôles repliés en icônes.
+// Tout est gated par IS_MOBILE ; le bureau n'est pas affecté.
+// ============================================================================
+const IS_MOBILE = window.matchMedia("(max-width:760px)").matches;
+if(IS_MOBILE){
+  const sheet=document.querySelector("aside");
+  const handle=document.getElementById("sheet-handle");
+  let sheetState="collapsed";                 // collapsed | half | full
+  const vh=()=>window.innerHeight;
+  const anchorT=(s)=> s==="full"?0 : s==="half"?0.46*vh() : 0.88*vh()-104;
+  function setSheet(s){
+    sheetState=s; sheet.classList.remove("half","full");
+    if(s!=="collapsed") sheet.classList.add(s);
+    sheet.style.transform="";                 // rend la main au transform CSS
+  }
+  const expandSheet=()=>{ if(sheetState==="collapsed") setSheet("half"); };
+  const collapseSheet=()=>setSheet("collapsed");
+
+  // Glisser la poignée : suivi tactile puis aimantation sur l'ancre la plus proche.
+  if(handle){
+    let dragging=false, startY=0, startT=0, lastY=0, moved=0;
+    const yOf=(e)=> e.touches? e.touches[0].clientY : e.clientY;
+    function down(e){ dragging=true; startY=lastY=yOf(e); startT=anchorT(sheetState);
+      moved=0; sheet.classList.add("dragging"); }
+    function move(e){ if(!dragging) return; lastY=yOf(e); moved=Math.max(moved,Math.abs(lastY-startY));
+      let t=Math.max(0,Math.min(0.88*vh()-40,startT+(lastY-startY)));
+      sheet.style.transform="translateY("+t+"px)"; if(e.cancelable) e.preventDefault(); }
+    function up(){ if(!dragging) return; dragging=false; sheet.classList.remove("dragging");
+      if(moved<6){                            // tap : cycle réduite → moitié → pleine
+        setSheet(sheetState==="collapsed"?"half":sheetState==="half"?"full":"collapsed"); return;
+      }
+      const t=startT+(lastY-startY);
+      const anchors=[["full",0],["half",0.46*vh()],["collapsed",0.88*vh()-104]];
+      let best=anchors[0]; anchors.forEach(a=>{ if(Math.abs(a[1]-t)<Math.abs(best[1]-t)) best=a; });
+      setSheet(best[0]);
+    }
+    handle.addEventListener("touchstart",down,{passive:true});
+    handle.addEventListener("touchmove",move,{passive:false});
+    handle.addEventListener("touchend",up);
+    handle.addEventListener("mousedown",down);
+    window.addEventListener("mousemove",move);
+    window.addEventListener("mouseup",up);
+  }
+
+  // Ouvrir la feuille quand on affiche un détail ; la réduire quand on cible la carte.
+  const _ouvrir=ouvrirDetail;   ouvrirDetail   =function(){ _ouvrir.apply(this,arguments);   expandSheet(); };
+  const _obs=montrerObs;        montrerObs     =function(){ _obs.apply(this,arguments);       expandSheet(); };
+  const _form=formulaireObs;    formulaireObs  =function(){ _form.apply(this,arguments);      expandSheet(); };
+  const _arm=armerCapture;      armerCapture   =function(){ _arm.apply(this,arguments);       collapseSheet(); };
+
+  // Replie un contrôle Leaflet en bouton-icône (ouverture au tap).
+  function makeCollapsible(el, icon){
+    if(!el) return;
+    const body=document.createElement("div"); body.className="mob-body";
+    while(el.firstChild) body.appendChild(el.firstChild);   // conserve les écouteurs
+    const toggle=document.createElement("button");
+    toggle.type="button"; toggle.className="mob-toggle"; toggle.textContent=icon;
+    el.classList.add("mob-collapse"); el.appendChild(toggle); el.appendChild(body);
+    toggle.addEventListener("click",(ev)=>{ ev.stopPropagation();
+      const open=el.classList.toggle("open");
+      if(open) document.querySelectorAll(".mob-collapse.open").forEach(o=>{ if(o!==el) o.classList.remove("open"); });
+    });
+  }
+  makeCollapsible(document.querySelector(".filtre"),  "🌲");
+  makeCollapsible(document.querySelector(".obsctrl"), "🧺");
+  makeCollapsible(document.querySelector(".rejeu"),   "🕒");
+}
 </script>
 </body>
 </html>

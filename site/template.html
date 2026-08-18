@@ -693,6 +693,7 @@ function construireGraph(mid){
   if(chart){ chart.destroy(); chart=null; }
   if(H && H.mailles[mid]){
     const m=H.mailles[mid];
+    const kc=HCUR<0?TODAY_IDX:HCUR, xhi=Math.min(HDATES.length-1,kc), xlo=Math.max(0,xhi-20);
     chart=new Chart(ctx,{
       data:{ labels:HDATES.map(d=>d.slice(2,7)),
         datasets:[
@@ -708,7 +709,7 @@ function construireGraph(mid){
         plugins:{legend:{labels:{boxWidth:12,font:{size:10},filter:it=>it.text!=="date"}}},
         scales:{ y:{min:0,max:100,title:{display:true,text:"indice",font:{size:9}},ticks:{font:{size:9}}},
           y2:{position:"right",grid:{drawOnChartArea:false},ticks:{font:{size:9}}},
-          x:{ticks:{font:{size:9},maxRotation:0,autoSkip:true,maxTicksLimit:8}} }}
+          x:{min:xlo,max:xhi,ticks:{font:{size:9},maxRotation:0,autoSkip:true,maxTicksLimit:8}} }}
     });
   } else {
     const serie=(D.mailles[mid].serie)||[];
@@ -744,9 +745,12 @@ function majDetailDate(){
     ? "Conditions du jour courant. L'indice anticipe la pousse à ~"+p.lag_jours+" j."
     : "Conditions SAFRAN au "+frDate(dyn.date)+" (rejeu).";
   if(chart && H && H.mailles[SELMID] && chart.data.datasets.length>=3){
-    const k = HCUR<0? HDATES.length-1 : HCUR;
+    const k = HCUR<0? TODAY_IDX : HCUR;
     const arr = HDATES.map(()=>null); arr[k]=H.mailles[SELMID].i[k];
-    chart.data.datasets[2].data=arr; chart.update("none");
+    chart.data.datasets[2].data=arr;
+    const gxhi=Math.min(HDATES.length-1,k), gxlo=Math.max(0,gxhi-20);
+    chart.options.scales.x.min=gxlo; chart.options.scales.x.max=gxhi;
+    chart.update("none");
   }
 }
 

@@ -875,10 +875,12 @@ function obsRefresh(){
   const show=document.getElementById("obs-show");
   if(!show || show.checked){
     OBS.forEach(o=>{
-      const mk=L.circleMarker([o.lat,o.lon],{radius:7,weight:2,color:"#fff",
-        fillColor:couleurObs(o.result),fillOpacity:0.95});
+      const vide=o.result==null;   // GPX importé non renseigné : marqueur distinct
+      const mk=L.circleMarker([o.lat,o.lon],{radius:7,weight:2,
+        color:vide?"#555":"#fff", dashArray:vide?"3":null,
+        fillColor:couleurObs(o.result),fillOpacity:vide?0.35:0.95});
       mk.on("click",(e)=>{L.DomEvent.stop(e); montrerObs(o);});
-      mk.bindTooltip(`${o.result}/10 · ${frDate(o.date)}`);
+      mk.bindTooltip(`${vide?"à renseigner":o.result+"/10"} · ${frDate(o.date)}`);
       obsLayer.addLayer(mk);
     });
   }
@@ -964,7 +966,7 @@ function montrerObs(o){
       if(v!=null && (maxPre==null || v>maxPre)){ maxPre=v; jbest=j; } }
     zone=`
      <div class="metrics">
-       ${metric("Ta cueillette", o.result+" / 10")}
+       ${metric("Ta cueillette", (o.result!=null?o.result:"—")+" / 10")}
        ${metric("Indice ce jour-là", (pred!=null?pred:"—")+" · "+niveauLbl(pred))}
        ${metric("Meilleur indice "+lag+" j avant", (maxPre!=null?maxPre:"—")+" · "+niveauLbl(maxPre))}
        ${metric("Déclencheur estimé", jbest!==k?frDate(HDATES[jbest]):"le jour même")}
@@ -984,7 +986,7 @@ function montrerObs(o){
       <h2 style="margin:0">Cueillette · ${frDate(o.date)}</h2>
     </div>
     <p class="hint" style="margin-top:8px"><span class="dot" style="display:inline-block;background:${couleurObs(o.result)}"></span>
-      <b>${o.result}/10</b> · ${ESPECE[o.espece]||o.espece} · ${EFFORT[o.effort]||o.effort||"—"}${o.note?" · "+o.note:""}</p>
+      <b>${o.result!=null?o.result:"—"}/10</b>${o.result==null?" <span style=\"color:#b26a00\">· à renseigner</span>":""} · ${ESPECE[o.espece]||o.espece} · ${EFFORT[o.effort]||o.effort||"—"}${o.note?" · "+o.note:""}</p>
     <p class="hint">Position ${o.lat.toFixed(5)}, ${o.lon.toFixed(5)} · maille ${mid}</p>
     ${luneInfoHTML(o.date)}
     ${zone}
@@ -1007,14 +1009,55 @@ function obsExport(){
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
   a.download="champipi_observations.json"; document.body.appendChild(a); a.click(); a.remove();
 }
-function obsImport(file){
-  const r=new FileReader();
-  r.onload=()=>{ try{ const arr=JSON.parse(r.result); if(!Array.isArray(arr)) throw 0;
-    const byId={}; OBS.concat(arr).forEach(o=>{ const key=o.id||[o.date,o.lat,o.lon].join("|"); byId[key]=o; });
-    OBS=Object.values(byId); obsSave(); obsRefresh();
-    alert("Importé : "+arr.length+" cueillette(s). Total : "+OBS.length+".");
-  }catch(e){ alert("Fichier invalide (JSON attendu)."); } };
-  r.readAsText(file);
+function readText(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(new Error("lecture")); r.readAsText(file); }); }
+// Parse un GPX : ne garde que les waypoints (<wpt>). Un point GPX n'a pas de
+// « résultat » → result=null : le point s'affiche « à renseigner » (contour gris
+// tireté) tant qu'il n'est pas édité. Il reste tel quel à travers export/import.
+function parseGpx(text){
+  const doc=new DOMParser().parseFromString(text,"application/xml");
+  if(doc.querySelector("parsererror")) throw new Error("GPX invalide");
+  const out=[];
+  doc.querySelectorAll("wpt").forEach(w=>{
+    const lat=parseFloat(w.getAttribute("lat")), lon=parseFloat(w.getAttribute("lon"));
+    if(!isFinite(lat)||!isFinite(lon)) return;
+    const t=w.querySelector("time"); const date=(t&&t.textContent)? t.textContent.trim().slice(0,10) : aujourdhui();
+    const nm=((w.querySelector("name")||{}).textContent||"").trim();
+    const ds=((w.querySelector("desc")||w.querySelector("cmt")||{}).textContent||"").trim();
+    const note=["GPX",nm,ds].filter(Boolean).join(" · ").slice(0,300);
+    const la=+lat.toFixed(5), lo=+lon.toFixed(5), ph=phaseLune(date);
+    out.push({ id:"g_"+la+"_"+lo+"_"+date, lat:la, lon:lo, date, result:null,
+      espece:"cepe", effort:"recherche", note,
+      lune_illum:+ph.illum.toFixed(3), lune_montante:ph.montante, lune_nom:ph.nom,
+      saisi_le:new Date().toISOString().slice(0,16).replace("T"," ") });
+  });
+  return out;
+}
+// Import multi-fichiers : .json (tableaux de cueillettes) et/ou .gpx (waypoints).
+async function obsImport(files){
+  let ajout=[], erreurs=0, vides=0;
+  for(const f of Array.from(files)){
+    try{
+      const txt=await readText(f);
+      const gpx=/\.gpx$/i.test(f.name) || /<gpx[\s>]/i.test(txt.slice(0,600));
+      const arr = gpx ? parseGpx(txt) : (()=>{ const a=JSON.parse(txt); if(!Array.isArray(a)) throw 0; return a; })();
+      arr.forEach(o=>{ if(o.result==null) vides++; });
+      ajout=ajout.concat(arr);
+    }catch(e){ erreurs++; }
+  }
+  if(!ajout.length){ alert(erreurs? "Aucun point valide (formats attendus : .json ou .gpx).":"Rien à importer."); return; }
+  // Fusion des doublons (même id) : on garde le point renseigné plutôt que le
+  // vide, et à statut égal le plus récent. Réimporter un vieil export ne réécrase
+  // donc jamais un résultat déjà saisi.
+  const mieux=(a,b)=>{ if(!a) return b; if(!b) return a;
+    const ra=a.result!=null, rb=b.result!=null; if(ra!==rb) return ra?a:b;
+    return (b.saisi_le||"")>=(a.saisi_le||"")?b:a; };
+  const byKey={};
+  OBS.concat(ajout).forEach(o=>{ const key=o.id||[o.date,o.lat,o.lon].join("|"); byKey[key]=mieux(byKey[key],o); });
+  OBS=Object.values(byKey); obsSave(); obsRefresh();
+  alert("Importé : "+ajout.length+" point(s)"
+    +(vides? " · dont "+vides+" à renseigner":"")
+    +(erreurs? " · "+erreurs+" fichier(s) ignoré(s)":"")
+    +". Total : "+OBS.length+".");
 }
 
 // Contrôle carte
@@ -1029,7 +1072,7 @@ obsCtrl.onAdd=function(){
     </div>
     <div class="obs-row">
       <button id="obs-exp" type="button">Exporter</button>
-      <label class="obs-imp">Importer<input type="file" id="obs-imp" accept="application/json" hidden></label>
+      <label class="obs-imp">Importer<input type="file" id="obs-imp" accept=".json,application/json,.gpx,application/gpx+xml" multiple hidden></label>
       <label><input type="checkbox" id="obs-show" checked> voir</label>
     </div>`;
   L.DomEvent.disableClickPropagation(div);
@@ -1041,7 +1084,7 @@ document.getElementById("obs-add").addEventListener("click",()=>{ armerCapture()
   const b=document.getElementById("obs-add"); b.textContent="Cliquez la carte…"; setTimeout(()=>b.textContent="➕ Placer",2500); });
 document.getElementById("obs-gps").addEventListener("click",captureGPS);
 document.getElementById("obs-exp").addEventListener("click",obsExport);
-document.getElementById("obs-imp").addEventListener("change",e=>{ if(e.target.files[0]) obsImport(e.target.files[0]); e.target.value=""; });
+document.getElementById("obs-imp").addEventListener("change",e=>{ if(e.target.files.length) obsImport(e.target.files); e.target.value=""; });
 document.getElementById("obs-show").addEventListener("change",obsRefresh);
 
 obsLoad(); obsRefresh();

@@ -51,6 +51,12 @@ jobs:
           # StatiCrypt écrit public/index.html (page chiffrée, prête à publier).
           # --short : accepte un mot de passe court sans poser de question interactive.
           test -f public/index.html || { echo "::error::public/index.html non généré"; exit 1; }
+          # Fichiers statiques (b) : géométrie versant + historique long. Servis
+          # EN CLAIR (open-data public IGN/BRGM/SAFRAN), chargés à la demande par
+          # la page. Ils vivent à côté de la page chiffrée dans public/.
+          cp site/geom_*.json public/ 2>/dev/null || true
+          cp site/hist_*.json public/ 2>/dev/null || true
+          echo "Contenu de public/ :"; ls -la public/
 
       - name: Préparer l'artefact Pages
         uses: actions/upload-pages-artifact@v3

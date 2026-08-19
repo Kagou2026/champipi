@@ -254,12 +254,64 @@ function couleur(indice){
     .replace("var(--n3)","#f9a825").replace("var(--n4)","#7cb342").replace("var(--n5)","#2e7d32");
 }
 
-// En-tête département
-const D = CHAMPIPI;
+// ============================================================================
+// BOOTSTRAP MULTI-DÉPARTEMENT (b)
+// La page n'embarque plus que le SIGNAL DU JOUR (léger, chiffré). La géométrie
+// (geom_XX.json, statique, public) et l'historique long (hist_XX.json) sont des
+// fichiers externes chargés à la demande. `D` est reconstruit ici à la forme
+// qu'attend le reste du code, en fusionnant les départements chargés.
+const RAW      = CHAMPIPI || {};
+const PARAMS   = RAW.params || {};
+const DEPTS    = RAW.departements || [];        // registre : {code,nom,bbox,geom,hist}
+const DEPTDATA = RAW.dept || {};                // signal du jour par département
+const LOADED_GEOM = {};                          // code -> true quand geom chargée
+let   HIST_STATE  = "absent";                    // absent | chargement | pret
+
+const D = {
+  genere_le:       RAW.genere_le,
+  lag_indicatif:   PARAMS.lag_indicatif,
+  versant_k:       PARAMS.versant_k,
+  choc:            PARAMS.choc,
+  essence_groupes: PARAMS.essence_groupes || [],
+  mailles:{}, top:[], stations:[], stations_date:null,
+  prevision:null, historique:null,
+  geojson:{type:"FeatureCollection", features:[]},
+  date_donnees:null, moyenne_departement:null, niveau_departement:null, nb_mailles:0,
+};
+
+// Fusionne le signal du jour (inline) de tous les départements présents. Les id
+// de maille SAFRAN sont uniques au niveau national -> fusion de dicts sûre. La
+// moyenne et le top sont recalculés sur l'ensemble chargé.
+function mergeDeptInline(){
+  const mailles={}; let top=[], stations=[], nb=0, dd=null, sdate=null;
+  let prevDates=null; const prevMailles={};
+  for(const code in DEPTDATA){
+    const dp=DEPTDATA[code]||{};
+    Object.assign(mailles, dp.mailles||{});
+    (dp.top||[]).forEach(t=>top.push(t));
+    (dp.stations||[]).forEach(s=>stations.push(s));
+    if(dp.stations_date) sdate=dp.stations_date;
+    nb += dp.nb_mailles||0;
+    if(dp.date_donnees && (!dd || dp.date_donnees>dd)) dd=dp.date_donnees;
+    if(dp.prevision && dp.prevision.dates){
+      prevDates=dp.prevision.dates; Object.assign(prevMailles, dp.prevision.mailles||{});
+    }
+  }
+  D.mailles=mailles; D.stations=stations; D.stations_date=sdate;
+  D.nb_mailles=nb; D.date_donnees=dd;
+  let s=0,n=0; for(const mid in mailles){const v=mailles[mid].indice; if(v!=null){s+=v;n++;}}
+  D.moyenne_departement = n? Math.round(s/n) : null;
+  D.niveau_departement  = niveauLbl(D.moyenne_departement);
+  top.sort((a,b)=>b.indice-a.indice); D.top=top.slice(0,5);
+  D.prevision = prevDates? {dates:prevDates, mailles:prevMailles} : null;
+}
+mergeDeptInline();
+
+// En-tête département (état initial ; réécrit par appliquer() au fil du rejeu).
 document.getElementById("dept-date").textContent =
   D.date_donnees ? ("Données du "+D.date_donnees) : "";
 document.getElementById("dept-val").textContent =
-  (D.moyenne_departement!==null? D.moyenne_departement : "—")+" · "+D.niveau_departement;
+  (D.moyenne_departement!==null? D.moyenne_departement : "—")+" · "+(D.niveau_departement||"—");
 document.getElementById("dept-dot").style.background = couleur(D.moyenne_departement);
 document.getElementById("m-moy").textContent =
   (D.moyenne_departement!==null? D.moyenne_departement : "—")+" / 100";
@@ -268,6 +320,12 @@ document.getElementById("m-best").textContent = best ? (best.indice+" / 100") : 
 
 // Carte
 const map = L.map("map",{scrollWheelZoom:true}).setView([44.52,3.55],9);
+// Pane dédié aux forêts, SOUS les marqueurs (cueillettes/stations restent cliquables).
+map.createPane("foret"); map.getPane("foret").style.zIndex=350;
+// Cadrage initial : union des emprises des départements du registre.
+(function(){ const bb=L.latLngBounds([]);
+  DEPTS.forEach(d=>{ if(d.bbox) bb.extend(L.latLngBounds([d.bbox[0][0],d.bbox[0][1]],[d.bbox[1][0],d.bbox[1][1]])); });
+  try{ if(bb.isValid()) map.fitBounds(bb,{padding:[10,10]}); }catch(e){} })();
 const ATTRIB="Indice : SIM Météo-France, BRGM, Open-Meteo · Forêts : BD Forêt V2 IGN · Versant : MNT IGN RGE ALTI";
 const fondTopo=L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
   {maxZoom:17, attribution:"© OpenTopoMap (CC-BY-SA) · "+ATTRIB});
@@ -403,35 +461,47 @@ function moduleFace(base, expo, stress){
   let v = base * (1 + VERSANT_K*expo*(stress||0));
   return Math.round(Math.max(0, Math.min(100, v)));
 }
-// Historique embarqué : {dates:[...], mailles:{mid:{i:[...],s:[...]}}}.
-const H = (D.historique && D.historique.dates && D.historique.dates.length) ? D.historique : null;
-// Fusion de la PRÉVISION dans la même timeline (passé + futur). FUTURESTART =
-// premier index "futur" (prévision météo, stylé à part).
-let FUTURESTART = H ? H.dates.length : 0;
-if(H && D.prevision && D.prevision.dates && D.prevision.dates.length){
-  const P=D.prevision;
-  H.dates = H.dates.concat(P.dates);
-  for(const mid in H.mailles){
-    const pm = P.mailles[mid];
-    ["i","s","w","p","t"].forEach(c=>{
-      H.mailles[mid][c] = (H.mailles[mid][c]||[]).concat(pm ? pm[c] : P.dates.map(()=>null));
-    });
+// Historique long : chargé À LA DEMANDE (hist_XX.json). Tant qu'il est absent,
+// H=null et toute l'UI retombe sur la vue "live" (chemin de repli déjà géré).
+let H = null;
+let FUTURESTART = 0;
+let HDATES = [];
+const estFutur = (k)=> k>=FUTURESTART;
+let HCUR = -1;   // -1 = vue du jour (live) ; sinon index dans HDATES.
+const COL_PASSE="#c2185b", COL_FUTUR="#1e88e5", COL_AUJ="#2e7d32";
+let TODAY_IDX = 0;
+const colPos=(k)=> k<TODAY_IDX?COL_PASSE : (k>TODAY_IDX?COL_FUTUR:COL_AUJ);
+// Assemble H depuis les hist par département téléchargés (+ prévision inline)
+// et calcule la timeline. Appelé une fois l'historique récupéré.
+function finaliserHistorique(histParDept){
+  let dates=null; const M={};
+  for(const code in histParDept){
+    const h=histParDept[code]; if(!h||!h.dates) continue;
+    if(!dates) dates=h.dates.slice();
+    Object.assign(M, h.mailles||{});
+  }
+  if(!dates){ return; }
+  H={dates:dates, mailles:M};
+  FUTURESTART=H.dates.length;
+  if(D.prevision && D.prevision.dates && D.prevision.dates.length){
+    const P=D.prevision;
+    H.dates=H.dates.concat(P.dates);
+    for(const mid in H.mailles){
+      const pm=P.mailles[mid];
+      ["i","s","w","p","t"].forEach(c=>{
+        H.mailles[mid][c]=(H.mailles[mid][c]||[]).concat(pm?pm[c]:P.dates.map(()=>null));
+      });
+    }
+  }
+  HDATES=H.dates;
+  TODAY_IDX=FUTURESTART;
+  if(HDATES.length){
+    const t=new Date(), s=t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0");
+    let bi=0,bd=Infinity; const ts=new Date(s+"T00:00:00Z").getTime();
+    for(let j=0;j<HDATES.length;j++){const dd=Math.abs(new Date(HDATES[j]+"T00:00:00Z").getTime()-ts); if(dd<bd){bd=dd;bi=j;}}
+    TODAY_IDX=bi;
   }
 }
-const HDATES = H ? H.dates : [];
-const estFutur = (k)=> k>=FUTURESTART;
-let HCUR = -1;   // -1 = vue du jour (live, valeurs serveur) ; sinon index dans HDATES.
-// Couleurs de la frise temporelle.
-const COL_PASSE="#c2185b", COL_FUTUR="#1e88e5", COL_AUJ="#2e7d32";
-// Index d'aujourd'hui dans la timeline (le plus proche de la date du jour).
-let TODAY_IDX = FUTURESTART;
-if(HDATES.length){
-  const t=new Date(), s=t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0");
-  let bi=0,bd=Infinity; const ts=new Date(s+"T00:00:00Z").getTime();
-  for(let j=0;j<HDATES.length;j++){const dd=Math.abs(new Date(HDATES[j]+"T00:00:00Z").getTime()-ts); if(dd<bd){bd=dd;bi=j;}}
-  TODAY_IDX=bi;
-}
-const colPos=(k)=> k<TODAY_IDX?COL_PASSE : (k>TODAY_IDX?COL_FUTUR:COL_AUJ);
 // Sélection courante dans le volet (maille cliquée) : permet au détail de suivre
 // la date du rejeu. Déclarés ici pour être initialisés avant le contrôle rejeu.
 let SELMID = null, SELFACE = null;
@@ -453,9 +523,12 @@ function moyenneJour(k){
 // Indice affiché pour une feature : vue live (valeurs serveur) ou rejeu (index
 // historique, face modulée par le versant à partir de la série SAFRAN).
 function indiceAt(f){
-  if(HCUR<0 || !H) return f.properties.indice;
-  const m=H.mailles[f.properties.maille_id];
-  if(!m) return null;
+  const mid=f.properties.maille_id;
+  if(HCUR<0 || !H || !H.mailles[mid]){
+    const m0=D.mailles[mid]; if(!m0) return null;
+    return moduleFace(m0.indice, f.properties.expo, m0.stress);
+  }
+  const m=H.mailles[mid];
   return moduleFace(m.i[HCUR], f.properties.expo, m.s[HCUR]);
 }
 
@@ -467,53 +540,63 @@ function styleFor(f){
           fillOpacity:BASE_FILL*(g?alphaOf(g):1), opacity:0.4};
 }
 
-// Une couche Leaflet par groupe d'essence (permet le filtre par cases).
-const parGroupe={};
-(D.geojson.features||[]).forEach(f=>{
-  const g=f.properties.groupe||"__all__";
-  (parGroupe[g]=parGroupe[g]||[]).push(f);
-});
-const layersByGroup={};
-Object.keys(parGroupe).forEach(g=>{
-  const lyr=L.geoJSON({type:"FeatureCollection",features:parGroupe[g]},{
-    style:styleFor,
-    onEachFeature:(f,l)=>{
-      l.on("click",(e)=>{
-        if(pendingCapture){ L.DomEvent.stop(e); finirCapture(e.latlng); return; }
-        if(D.mailles[f.properties.maille_id]) ouvrirDetail(f.properties.maille_id, f.properties);});
-      l.on("mouseover",()=>l.setStyle({weight:2.2,fillOpacity:0.9}));
-      l.on("mouseout",()=>lyr.resetStyle(l));
-    }
+// Rendu des forêts (versant), construit depuis la géométrie EXTERNE (geom_XX.json)
+// une fois chargée. Idempotent : reconstruit proprement quand un nouveau
+// département entre dans la vue (fusion régionale).
+const parGroupe={}, layersByGroup={};
+let filtreCtrl=null, _fitFait=false;
+function construireCouches(){
+  // préserver l'état des cases (choix utilisateur) au travers d'un rebuild
+  const etat={}; document.querySelectorAll('.filtre input[data-g]').forEach(cb=>etat[cb.getAttribute("data-g")]=cb.checked);
+  Object.values(layersByGroup).forEach(l=>{try{map.removeLayer(l);}catch(e){}});
+  for(const k in parGroupe) delete parGroupe[k];
+  for(const k in layersByGroup) delete layersByGroup[k];
+  (D.geojson.features||[]).forEach(f=>{
+    const g=(f.properties&&f.properties.groupe)||"__all__";
+    (parGroupe[g]=parGroupe[g]||[]).push(f);
   });
-  layersByGroup[g]=lyr;
-});
-// Affichage initial : selon "defaut" de chaque groupe (reste décoché).
-// On ajoute les étages faibles d'abord pour que les principales soient au-dessus.
-["reste","secondaire","principale","__all__"].forEach(et=>{
-  Object.keys(layersByGroup).forEach(g=>{
-    const meta=GRP[g]; const etage=meta?meta.etage:"__all__";
-    if(etage!==et) return;
-    if(!meta || meta.defaut) layersByGroup[g].addTo(map);
+  Object.keys(parGroupe).forEach(g=>{
+    const lyr=L.geoJSON({type:"FeatureCollection",features:parGroupe[g]},{
+      pane:"foret", style:styleFor,
+      onEachFeature:(f,l)=>{
+        l.on("click",(e)=>{
+          if(pendingCapture){ L.DomEvent.stop(e); finirCapture(e.latlng); return; }
+          if(D.mailles[f.properties.maille_id]) ouvrirDetail(f.properties.maille_id, f.properties);});
+        l.on("mouseover",()=>l.setStyle({weight:2.2,fillOpacity:0.9}));
+        l.on("mouseout",()=>lyr.resetStyle(l));
+      }});
+    layersByGroup[g]=lyr;
   });
-});
-// Cadrage sur l'ensemble des forêts.
-const bnds=L.latLngBounds([]);
-Object.values(layersByGroup).forEach(l=>{try{bnds.extend(l.getBounds());}catch(e){}});
-try{ if(bnds.isValid()) map.fitBounds(bnds,{padding:[10,10]}); }catch(e){}
-
-// --- Contrôle de filtre par essence ---------------------------------------
-if((D.essence_groupes||[]).length){
+  ["reste","secondaire","principale","__all__"].forEach(et=>{
+    Object.keys(layersByGroup).forEach(g=>{
+      const meta=GRP[g]; const etage=meta?meta.etage:"__all__";
+      if(etage!==et) return;
+      const on = (g in etat) ? etat[g] : (!meta || meta.defaut);
+      if(on) layersByGroup[g].addTo(map);
+    });
+  });
+  if(!_fitFait){
+    const bnds=L.latLngBounds([]);
+    Object.values(layersByGroup).forEach(l=>{try{bnds.extend(l.getBounds());}catch(e){}});
+    try{ if(bnds.isValid()){ map.fitBounds(bnds,{padding:[10,10]}); _fitFait=true; } }catch(e){}
+  }
+  ajouterFiltreEssences();
+}
+function ajouterFiltreEssences(){
+  if(!(D.essence_groupes||[]).length) return;
+  if(filtreCtrl){ try{map.removeControl(filtreCtrl);}catch(e){} filtreCtrl=null; }
   const ctrl=L.control({position:"topright"});
   ctrl.onAdd=function(){
     const div=L.DomUtil.create("div","filtre");
     const etages=[["principale","Principales"],["secondaire","Secondaires"],["reste","Autres"]];
     let html=`<div class="filtre-h"><span>Essences</span><button id="f-all" type="button">tout</button></div>`;
     etages.forEach(([et,titre])=>{
-      const gs=D.essence_groupes.filter(g=>g.etage===et);
+      const gs=D.essence_groupes.filter(g=>g.etage===et && layersByGroup[g.key]);
       if(!gs.length) return;
       html+=`<div class="grp-t">${titre}</div>`;
       gs.forEach(g=>{
-        html+=`<label><input type="checkbox" data-g="${g.key}" ${g.defaut?"checked":""}>`+
+        const on = map.hasLayer(layersByGroup[g.key]);
+        html+=`<label><input type="checkbox" data-g="${g.key}" ${on?"checked":""}>`+
               `<span class="sw" style="opacity:${g.alpha}"></span>${g.label}</label>`;
       });
     });
@@ -522,7 +605,7 @@ if((D.essence_groupes||[]).length){
     L.DomEvent.disableScrollPropagation(div);
     return div;
   };
-  ctrl.addTo(map);
+  ctrl.addTo(map); filtreCtrl=ctrl;
   const toggle=(g,on)=>{const lyr=layersByGroup[g]; if(!lyr) return;
     if(on) lyr.addTo(map); else map.removeLayer(lyr);};
   document.querySelectorAll('.filtre input[data-g]').forEach(cb=>{
@@ -534,6 +617,27 @@ if((D.essence_groupes||[]).length){
     const allOn=boxes.every(b=>b.checked);
     boxes.forEach(b=>{b.checked=!allOn; toggle(b.getAttribute("data-g"),b.checked);});
   });
+  if(typeof IS_MOBILE!=="undefined" && IS_MOBILE && window.__mkCollapse)
+    window.__mkCollapse(document.querySelector(".filtre"),"🌲");
+}
+function deptVisible(d){
+  if(!d.bbox) return true;
+  const db=L.latLngBounds([d.bbox[0][0],d.bbox[0][1]],[d.bbox[1][0],d.bbox[1][1]]);
+  try{ return map.getBounds().intersects(db); }catch(e){ return true; }
+}
+let _geomEnCours=false;
+async function chargerGeomVisibles(){
+  if(_geomEnCours) return;
+  const cibles=DEPTS.filter(d=>d.geom && !LOADED_GEOM[d.code] && deptVisible(d));
+  if(!cibles.length) return;
+  _geomEnCours=true; let ajout=false;
+  await Promise.all(cibles.map(async d=>{
+    try{ const r=await fetch(d.geom); if(r.ok){ const g=await r.json();
+      (g.features||[]).forEach(f=>D.geojson.features.push(f));
+      LOADED_GEOM[d.code]=true; ajout=true; } }catch(e){}
+  }));
+  _geomEnCours=false;
+  if(ajout){ construireCouches(); if(HCUR>=0) appliquer(); }
 }
 
 // --- Curseur temporel (rejeu de l'historique) ------------------------------
@@ -564,7 +668,46 @@ function appliquer(){
   majLuneBox();
   rafraichirVolet();
 }
-if(H && HDATES.length>1){
+// --- Rejeu paresseux : placeholder au départ, vrai curseur après chargement ---
+let rejeuPlaceholder=null;
+function ajouterRejeuPlaceholder(){
+  if(!DEPTS.some(d=>d.hist)) return;
+  const rc=L.control({position:"bottomright"});
+  rc.onAdd=function(){
+    const div=L.DomUtil.create("div","rejeu");
+    div.innerHTML=`<div class="rejeu-h">🕒 <b>Rejeu</b></div>
+      <div class="rejeu-row"><button id="rj-load" type="button">Charger l'historique</button></div>
+      <div class="note">Remonter le temps sur plusieurs années. L'historique (~3 Mo/dépt) se charge à la demande.</div>`;
+    L.DomEvent.disableClickPropagation(div); L.DomEvent.disableScrollPropagation(div);
+    return div;
+  };
+  rc.addTo(map); rejeuPlaceholder=rc;
+  const b=document.getElementById("rj-load");
+  if(b) b.addEventListener("click",()=>{ b.disabled=true; b.textContent="Chargement…"; chargerHistorique(); });
+  if(typeof IS_MOBILE!=="undefined" && IS_MOBILE && window.__mkCollapse)
+    window.__mkCollapse(document.querySelector(".rejeu"),"🕒");
+}
+async function chargerHistorique(){
+  if(HIST_STATE==="pret") return true;
+  if(HIST_STATE==="chargement") return false;
+  HIST_STATE="chargement";
+  const parDept={};
+  await Promise.all(DEPTS.filter(d=>d.hist).map(async d=>{
+    try{ const r=await fetch(d.hist); if(r.ok) parDept[d.code]=await r.json(); }catch(e){}
+  }));
+  finaliserHistorique(parDept);
+  if(H){
+    HIST_STATE="pret";
+    if(rejeuPlaceholder){ try{map.removeControl(rejeuPlaceholder);}catch(e){} rejeuPlaceholder=null; }
+    activerRejeu();
+  } else {
+    HIST_STATE="absent";
+    const b=document.getElementById("rj-load"); if(b){ b.disabled=false; b.textContent="Réessayer"; }
+  }
+  return !!H;
+}
+function activerRejeu(){
+  if(!(H && HDATES.length>1)) return;
   // index de la date la plus proche d'une chaîne "YYYY-MM-DD".
   const idxProche=(s)=>{ if(s<=HDATES[0]) return 0; if(s>=HDATES[HDATES.length-1]) return HDATES.length-1;
     let lo=0,hi=HDATES.length-1; while(lo<hi){const m=(lo+hi)>>1; if(HDATES[m]<s) lo=m+1; else hi=m;}
@@ -636,6 +779,8 @@ if(H && HDATES.length>1){
   });
   // Défaut : vue du jour.
   setLive();
+  if(typeof IS_MOBILE!=="undefined" && IS_MOBILE && window.__mkCollapse)
+    window.__mkCollapse(document.querySelector(".rejeu"),"🕒");
 }
 
 function metric(k,v,id){return `<div class="metric"><div class="k">${k}</div><div class="v"${id?` id="${id}"`:""}>${v}</div></div>`;}
@@ -824,33 +969,36 @@ function remplirTop(){
 function rafraichirVolet(){ if(SELMID) majDetailDate(); else remplirTop(); }
 
 function addDays(ds,n){ const d=new Date(ds+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
-// Synthèse de prévision : prochaine fenêtre favorable + pousse attendue (+lag) + secteurs.
+// Synthèse de prévision : prochaine fenêtre favorable + pousse attendue (+lag) +
+// secteurs. Basée sur la PRÉVISION inline (D.prevision) : disponible sans avoir
+// à charger le lourd historique.
 function fillSynth(){
   const el=document.getElementById("prev-synth"); if(!el) return;
-  if(!H || FUTURESTART>=HDATES.length){ el.innerHTML=""; return; }
+  const P=D.prevision;
+  if(!P || !P.dates || !P.dates.length){ el.innerHTML=""; return; }
+  const PD=P.dates, PM=P.mailles||{};
   const SEUIL=55;
-  let peakK=-1, peakV=-1;
-  for(let k=FUTURESTART;k<HDATES.length;k++){
-    let bv=-1; for(const mid in H.mailles){const v=H.mailles[mid].i[k]; if(v!=null&&v>bv)bv=v;}
-    if(bv>peakV){peakV=bv; peakK=k;}
-  }
+  const bestAt=(k)=>{let bv=-1;for(const mid in PM){const a=PM[mid].i;const v=a?a[k]:null;if(v!=null&&v>bv)bv=v;}return bv;};
+  let peakK=-1,peakV=-1;
+  for(let k=0;k<PD.length;k++){const bv=bestAt(k); if(bv>peakV){peakV=bv; peakK=k;}}
   if(peakV<SEUIL){
     el.innerHTML=`<div class="synth-t">🍄 Prévision de sortie</div>
-      <div>Pas de fenêtre nettement favorable prévue d'ici le ${frDate(HDATES[HDATES.length-1])} (meilleur indice attendu ${peakV}).</div>
+      <div>Pas de fenêtre nettement favorable prévue d'ici le ${frDate(PD[PD.length-1])} (meilleur indice attendu ${peakV<0?"—":peakV}).</div>
       <div class="synth-n">Prévision météo — fiabilité décroissante au-delà de ~5–7 j.</div>`;
     return;
   }
-  // fenêtre de conditions favorables autour du pic
   let a=peakK,b=peakK;
-  const bestAt=(k)=>{let bv=-1;for(const mid in H.mailles){const v=H.mailles[mid].i[k];if(v!=null&&v>bv)bv=v;}return bv;};
-  while(a-1>=FUTURESTART && bestAt(a-1)>=SEUIL) a--;
-  while(b+1<HDATES.length && bestAt(b+1)>=SEUIL) b++;
-  const top=computeTop(peakK).slice(0,3);
+  while(a-1>=0 && bestAt(a-1)>=SEUIL) a--;
+  while(b+1<PD.length && bestAt(b+1)>=SEUIL) b++;
+  const arr=[];
+  for(const mid in PM){ const ai=PM[mid].i; const v=ai?ai[peakK]:null; if(v==null) continue;
+    const p=D.mailles[mid]||{}; arr.push({mid,indice:v,altitude:p.altitude,geologie:p.geologie_classe}); }
+  arr.sort((x,y)=>y.indice-x.indice); const top=arr.slice(0,3);
   const lag=(top[0]&&D.mailles[top[0].mid]&&D.mailles[top[0].mid].lag_jours)||12;
-  const f1=addDays(HDATES[a],lag), f2=addDays(HDATES[b],lag);
+  const f1=addDays(PD[a],lag), f2=addDays(PD[b],lag);
   const secteurs=top.map(z=>Math.round(z.altitude||0)+" m "+(z.geologie||"")).join(" · ");
   el.innerHTML=`<div class="synth-t">🍄 Prévision de sortie</div>
-    <div>Conditions favorables prévues <b>${frDate(HDATES[a])}${a!==b?" → "+frDate(HDATES[b]):""}</b> (indice jusqu'à ${peakV}).</div>
+    <div>Conditions favorables prévues <b>${frDate(PD[a])}${a!==b?" → "+frDate(PD[b]):""}</b> (indice jusqu'à ${peakV}).</div>
     <div>Pousse attendue ~${lag} j après → <b>${frDate(f1)}${a!==b?" → "+frDate(f2):""}</b>.</div>
     <div class="synth-s">Meilleurs secteurs : ${secteurs}.</div>
     <div class="synth-n">Prévision météo — fiabilité décroissante au-delà de ~5–7 j. SWI projeté (bilan hydrique).</div>`;
@@ -1401,6 +1549,7 @@ if(IS_MOBILE){
       if(open) document.querySelectorAll(".mob-collapse.open").forEach(o=>{ if(o!==el) o.classList.remove("open"); });
     });
   }
+  window.__mkCollapse=makeCollapsible;
   makeCollapsible(document.querySelector(".filtre"),  "🌲");
   makeCollapsible(document.querySelector(".obsctrl"), "🧺");
   makeCollapsible(document.querySelector(".rejeu"),   "🕒");
@@ -1446,6 +1595,14 @@ try{
     window.addEventListener("resize",()=>{ applyW(parseInt(getComputedStyle(mainEl).getPropertyValue("--aside-w"),10)||340); });
   }
 }catch(e){ /* redimensionnement non-critique : ne doit jamais casser la page */ }
+
+// ============================================================================
+// DÉMARRAGE (b) : géométrie des départements visibles (fetch geom_XX.json) +
+// rejeu paresseux. Placé en toute fin : IS_MOBILE et __mkCollapse sont prêts.
+// ============================================================================
+map.on("moveend", chargerGeomVisibles);
+chargerGeomVisibles();
+ajouterRejeuPlaceholder();
 </script>
 </body>
 </html>

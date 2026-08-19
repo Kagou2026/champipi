@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     SITE_TEMPLATE, SITE_OUTPUT, LAG_JOURS_PLAINE,
+                    DEPARTEMENT_CODE, NOM_DEPARTEMENT,
                     ESSENCE_GROUPES, ESSENCE_ORDRE, VERSANT_CLASSES, VERSANT_K,
                     CHOC_K, CHOC_K_CHAUD, CHOC_MIN, CHOC_OPT,
                     CHOC_FENETRE_RECENTE, CHOC_FENETRE_REF,
@@ -461,13 +462,23 @@ def main():
         "geojson": {"type": "FeatureCollection", "features": features},
     }
 
-    print("5/5 Génération de site/index.html...")
-    with open(SITE_TEMPLATE, encoding="utf-8") as fp:
-        template = fp.read()
-    data_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    html = template.replace("/*__CHAMPIPI_DATA__*/null", data_json)
-    with open(SITE_OUTPUT, "w", encoding="utf-8") as fp:
-        fp.write(html)
+    # Sorties (b) : page légère (signal du jour, chiffrée) + geom_<code>.json
+    # (géométrie statique, en clair, cachée) + hist_<code>.json (rejeu, à la
+    # demande). Cf. robot/emit.py. La page passe de ~10 Mo à ~0,3 Mo.
+    print("5/5 Génération de la page (signal léger) + fichiers statiques...")
+    from emit import ecrire_sorties
+    import os as _os
+    params = {
+        "lag_indicatif": LAG_JOURS_PLAINE,
+        "versant_k": VERSANT_K,
+        "choc": payload["choc"],
+        "essence_groupes": essence_groupes,
+    }
+    out_dir = _os.path.dirname(SITE_OUTPUT) or "."
+    infos = ecrire_sorties([(DEPARTEMENT_CODE, NOM_DEPARTEMENT, payload)],
+                           SITE_TEMPLATE, out_dir, params)
+    for _name, _mb in infos.items():
+        print(f"    {_name:22} {_mb:.3f} Mo")
 
     print(f"\nOK. Moyenne département : {moyenne} ({niveau(moyenne)}) "
           f"| données du {date_donnees} | {len(features)} mailles")

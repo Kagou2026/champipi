@@ -13,6 +13,7 @@ LOZERE_BBOX_WGS84 = (2.95, 44.05, 4.00, 45.00)
 LOZERE_BBOX_L93 = (680000, 6330000, 795000, 6445000)
 
 DEPARTEMENT_CODE = "48"
+NOM_DEPARTEMENT = "Lozère"
 
 # --- Sources de données (toutes en accès libre, sans clé) ------------------
 
@@ -264,6 +265,17 @@ VERSANT_POIDS_THERMIQUE = 0.40
 VERSANT_SIMPLIFY_M = 120         # tolérance de simplification (m)
 VERSANT_COORD_DECIMALES = 5      # arrondi des coordonnées WGS84 (~1 m)
 VERSANT_AIRE_MIN_HA = 0.5        # on jette les faces < 0.5 ha (bruit)
+
+# --- (a) Allègement de la géométrie SERVIE (page) — niveau « équilibré » -----
+# La SOURCE (data/versant_geom.json) reste pleine ; c'est le fichier geom_<code>
+# livré à la page qui est allégé, à chaque génération (robot/emit.py, pur Python).
+#   GEOM_MIN_PART_HA : on jette les morceaux de forêt plus petits (confetti :
+#     ~60 % des polygones pour ~10 % de la surface). Chaque face garde au moins
+#     son plus gros morceau. 0 = ne rien jeter.
+#   GEOM_COORD_DECIMALES : arrondi des coordonnées (~11 m à 4 déc.), + dédup.
+# Résultat Lozère : ~7 Mo -> ~3 Mo, motif forestier visuellement identique.
+GEOM_MIN_PART_HA = 3.0
+GEOM_COORD_DECIMALES = 4
 
 # --- Pluviomètres quotidiens Météo-France (correction locale de la pluie) ----
 # Données open-data SANS clé (« Données climatologiques de base - quotidiennes »).

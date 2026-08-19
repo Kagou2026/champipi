@@ -12,6 +12,9 @@ brgm_caps.xml
 # La page générée est déployée par le workflow, pas versionnée en clair.
 # (On garde template.html ; index.html est régénéré puis chiffré.)
 site/index.html
+# Fichiers statiques régénérés par le robot (b) : géométrie + historique.
+site/geom_*.json
+site/hist_*.json
 
 # Sortie de chiffrement StatiCrypt + config auto-générée
 public/

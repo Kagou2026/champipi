@@ -117,14 +117,18 @@
   .stat-note{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.3}
   /* Marqueur station = petite jauge verticale à 4 cellules, remplie selon la pluie */
   .stmk-wrap{background:none;border:none}
-  .stmk{display:flex;flex-direction:column-reverse;gap:1px;width:9px;padding:1px;cursor:pointer;
-    background:rgba(255,255,255,.92);border:1px solid rgba(0,0,0,.4);border-radius:2px;box-shadow:0 1px 3px rgba(0,0,0,.35)}
-  .stmk i{display:block;height:4px;border-radius:1px;background:#e3e7ea}
+  .stmk{display:flex;flex-direction:column-reverse;gap:2px;width:17px;padding:2px;cursor:pointer;
+    background:#fff;border:2px solid rgba(20,40,60,.7);border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+  .stmk i{display:block;height:8px;border-radius:2px;background:#dbe1e6;box-shadow:inset 0 0 0 1px rgba(0,0,0,.10)}
+  .stmk:hover{border-color:#0d47a1;box-shadow:0 2px 8px rgba(13,71,161,.6)}
   /* Barres de pluie 15 j dans le panneau latéral (clic station) */
-  .stbars{display:flex;align-items:flex-end;gap:3px;height:78px;padding:6px 0 2px}
+  .stbars{display:flex;align-items:flex-end;gap:3px;height:98px;padding:6px 0 2px}
   .stbars .sbar2{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
   .stbars .sbar2 i{display:block;width:100%;max-width:16px;border-radius:2px 2px 0 0;background:#cfd8dc}
-  .stbars .sbar2 span{font-size:8px;color:var(--muted);margin-top:3px}
+  .stbars .sbar2 .mm{font-size:8px;line-height:1;margin-bottom:2px;min-height:9px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .stbars .sbar2 .mm.on{color:#0d47a1;font-weight:650}
+  .stbars .sbar2 .mm.off{color:#c7ccd1}
+  .stbars .sbar2 .d{font-size:8px;color:var(--muted);margin-top:3px}
   /* ====================== MOBILE ====================== */
   @media(max-width:760px){
     header{padding:9px 14px;gap:8px}
@@ -1275,9 +1279,13 @@ function montrerStation(s){
   const jours=vals.filter(v=>v>0).length;
   const maxj=vals.length?Math.max(...vals):null;
   const bars=serie.map(x=>{ const v=x[1];
-    const h=(v==null)?2:Math.max(2,Math.round(3+56*v/mx));
+    const h=(v==null)?2:Math.max(2,Math.round(3+48*v/mx));
     const t=(v==null?"—":v+" mm")+" · "+frDate(x[0]);
-    return `<div class="sbar2" title="${t}"><i style="height:${h}px;background:${couleurPluie(v)}"></i><span>${x[0].slice(8)}</span></div>`;
+    // valeur en mm au-dessus de la barre : bleu si pluie, gris pâle si 0/absent
+    const on=v!=null&&v>0;
+    const mmlab=v==null?"·":(Number.isInteger(v)?v:v.toFixed(1));
+    return `<div class="sbar2" title="${t}"><span class="mm ${on?'on':'off'}">${mmlab}</span>`
+      +`<i style="height:${h}px;background:${couleurPluie(v)}"></i><span class="d">${x[0].slice(8)}</span></div>`;
   }).join("");
   const el=document.getElementById("detail");
   el.innerHTML=`
@@ -1305,7 +1313,7 @@ try{
     const statLayer=L.layerGroup();   // OFF au départ (ajouté au clic "voir")
     STA.forEach(s=>{
       const mk=L.marker([s.lat,s.lon],{icon:L.divIcon({className:"stmk-wrap",
-        html:jaugeHTML(s.cumul_15j), iconSize:[13,26], iconAnchor:[6,13]})});
+        html:jaugeHTML(s.cumul_15j), iconSize:[25,46], iconAnchor:[12,23]})});
       mk.bindTooltip(`${s.nom||s.num} · ${s.cumul_15j!=null?s.cumul_15j+" mm/15j":"—"}`);
       mk.on("click",()=>montrerStation(s));   // détail dans le panneau latéral
       statLayer.addLayer(mk);

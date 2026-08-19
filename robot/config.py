@@ -15,6 +15,35 @@ LOZERE_BBOX_L93 = (680000, 6330000, 795000, 6445000)
 DEPARTEMENT_CODE = "48"
 NOM_DEPARTEMENT = "Lozère"
 
+# --- Registre multi-département --------------------------------------------
+# Chaque département a son emprise (bbox Lambert-93, pour le WFS SIM), son
+# contour (clip), et ses fichiers de données statiques. Le 48 garde ses chemins
+# historiques (data/terrain.json...) ; les autres sont suffixés (data/*_30.json).
+# `ACTIVE_DEPARTEMENTS` = ceux que le robot quotidien rend (ordre d'affichage).
+_CONTOUR = ("https://raw.githubusercontent.com/gregoiredavid/france-geojson/"
+            "master/departements/{code}-{slug}/departement-{code}-{slug}.geojson")
+
+DEPARTEMENTS = {
+    "48": {"nom": "Lozère", "bbox_l93": (680000, 6330000, 795000, 6445000),
+           "contour": _CONTOUR.format(code="48", slug="lozere"),
+           "terrain": "data/terrain.json", "foret_geom": "data/foret_geom.json",
+           "versant_geom": "data/versant_geom.json", "hist": "data/historique.json",
+           "grille": "data/safran_grille.json"},
+    "30": {"nom": "Gard", "bbox_l93": (711900, 6251673, 857981, 6383699),
+           "contour": _CONTOUR.format(code="30", slug="gard"),
+           "terrain": "data/terrain_30.json", "foret_geom": "data/foret_geom_30.json",
+           "versant_geom": "data/versant_geom_30.json", "hist": "data/historique_30.json",
+           "grille": "data/safran_grille_30.json"},
+    "07": {"nom": "Ardèche", "bbox_l93": (758588, 6340878, 859837, 6483726),
+           "contour": _CONTOUR.format(code="07", slug="ardeche"),
+           "terrain": "data/terrain_07.json", "foret_geom": "data/foret_geom_07.json",
+           "versant_geom": "data/versant_geom_07.json", "hist": "data/historique_07.json",
+           "grille": "data/safran_grille_07.json"},
+}
+
+# Départements rendus par le robot quotidien (ordre = ordre du registre page).
+ACTIVE_DEPARTEMENTS = ["48", "30", "07"]
+
 # --- Sources de données (toutes en accès libre, sans clé) ------------------
 
 # Météo-France / SAFRAN-ISBA, moissonné par la DREAL Bretagne (data.gouv).
@@ -283,7 +312,8 @@ GEOM_COORD_DECIMALES = 4
 # maille de bord est mieux servie par une station du département d'à côté), pour
 # CORRIGER localement le cumul 15 j de SAFRAN, trop lissé à 8 km pour les orages
 # cévenols. Cf. mémoire projet champipi-pluie-fiabilite.
-STATION_DEPTS = ["48", "07", "12", "15", "30", "43"]
+# 48 + 07 + 30 et TOUS leurs limitrophes (correction pluie locale multi-dépt).
+STATION_DEPTS = ["48", "07", "30", "12", "15", "43", "26", "84", "34", "13"]
 # DEUX réseaux Météo-France par département : principal (QUOT) + complémentaire
 # (QUOT_COMP, essentiellement des pluviomètres RR — ~+70 % de stations, souvent
 # plus proches du terrain). On lit les deux et on fusionne par NUM_POSTE.

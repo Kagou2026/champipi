@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     SITE_TEMPLATE, SITE_OUTPUT, LAG_JOURS_PLAINE,
                     DEPARTEMENT_CODE, NOM_DEPARTEMENT,
+                    DEPARTEMENTS, ACTIVE_DEPARTEMENTS,
                     ESSENCE_GROUPES, ESSENCE_ORDRE, VERSANT_CLASSES, VERSANT_K,
                     CHOC_K, CHOC_K_CHAUD, CHOC_MIN, CHOC_OPT,
                     CHOC_FENETRE_RECENTE, CHOC_FENETRE_REF,
@@ -30,29 +31,29 @@ from versant import stress_hydrothermique, indice_module
 from backfill_hist import historique_a_jour
 
 
-def charger_terrain():
-    with open(TERRAIN_FILE, encoding="utf-8") as fp:
+def charger_terrain(path=TERRAIN_FILE):
+    with open(path, encoding="utf-8") as fp:
         return json.load(fp)["cellules"]
 
 
-def charger_foret_geom():
+def charger_foret_geom(path=FORET_GEOM_FILE):
     """Emprises forestières par maille (rendu carte). Absent = pas encore
     généré : on retombera sur les carrés 8 km."""
     try:
-        with open(FORET_GEOM_FILE, encoding="utf-8") as fp:
+        with open(path, encoding="utf-8") as fp:
             return json.load(fp)
     except FileNotFoundError:
         return {}
 
 
-def charger_versant_geom():
+def charger_versant_geom(path=VERSANT_GEOM_FILE):
     """Faces de forêt découpées par versant (nord/sud/neutre) avec exposition.
 
     Structure : {maille_id: {groupe: {classe: {"expo": x, "geom": geojson}}}}.
     Absent = versant pas encore construit (build_versant.py) : le robot retombe
     proprement sur foret_geom (rendu sans versant)."""
     try:
-        with open(VERSANT_GEOM_FILE, encoding="utf-8") as fp:
+        with open(path, encoding="utf-8") as fp:
             return json.load(fp)
     except FileNotFoundError:
         return {}
@@ -186,33 +187,24 @@ def corrige_historique(historique, terrain, coef_par_maille, stations, jours=15)
                            if w_c is not None else None)
 
 
-def main():
-    print("1/5 Chargement du terrain...")
-    terrain = charger_terrain()
-    foret_geom = charger_foret_geom()
-    versant_geom = charger_versant_geom()
+def traiter_departement(ctx, stations, emettre_stations=True):
+    """Calcule le payload d'UN département. `stations` est partagé (récupéré une
+    seule fois pour toute la région, interpolé par maille ensuite)."""
+    code = ctx["code"]; nom = ctx["nom"]
+    print(f"[{code} {nom}] 1/5 Terrain...")
+    terrain = charger_terrain(ctx["terrain"])
+    foret_geom = charger_foret_geom(ctx["foret_geom"])
+    versant_geom = charger_versant_geom(ctx["versant_geom"])
     src_rendu = "versant" if versant_geom else ("forêt" if foret_geom else "carrés 8 km")
     print(f"    {len(terrain)} mailles, {len(foret_geom)} emprises forêt, "
           f"{len(versant_geom)} mailles versant → rendu : {src_rendu}")
 
-    print("2/5 Données SIM (humidité, pluie)...")
-    sim = organiser_par_maille(fetch_sim_features())
+    print(f"[{code}] 2/5 Données SIM...")
+    sim = organiser_par_maille(fetch_sim_features(bbox_l93=ctx["bbox_l93"]))
 
-    print("3/5 Températures (Open-Meteo)...")
+    print(f"[{code}] 3/5 Températures (Open-Meteo)...")
     coords = [(c["lat"], c["lon"]) for c in terrain]
     temps = temperatures_par_maille(coords)
-
-    # Pluviomètres quotidiens (48 + limitrophes) : correction LOCALE du cumul
-    # 15 j et poussée du SWI, là où SAFRAN 8 km lisse les orages cévenols.
-    # Best-effort : source externe indisponible → liste vide → correction neutre.
-    print("3b/5 Pluviomètres (correction locale)...")
-    try:
-        stations = fetch_stations()
-        print(f"    {len(stations)} stations (48 + limitrophes)")
-    except Exception as e:
-        stations = []
-        print(f"    ⚠ stations indisponibles ({type(e).__name__}: {e}) — "
-              f"correction désactivée")
 
     coef_par_maille = {}   # pour corriger ensuite la queue du long historique
 
@@ -397,7 +389,7 @@ def main():
     # plus récent disponible. Absent si data/historique.json manque (le curseur
     # côté page retombe alors sur la série 15 j).
     print("    Historique (rejeu long)…")
-    historique = historique_a_jour()
+    historique = historique_a_jour(ctx["hist"], ctx["grille"], ctx["terrain"])
     if historique:
         print(f"    {historique['n_jours']} jours "
               f"({historique['debut']} → {historique['fin']})")
@@ -423,7 +415,7 @@ def main():
     # Sources mêmes que la correction ; on expose leur cumul et leur série.
     stations_payload = []
     stations_date = None
-    if stations:
+    if stations and emettre_stations:
         jours_dispo = set()
         for s in stations:
             jours_dispo.update(s["rr"])
@@ -465,23 +457,50 @@ def main():
     # Sorties (b) : page légère (signal du jour, chiffrée) + geom_<code>.json
     # (géométrie statique, en clair, cachée) + hist_<code>.json (rejeu, à la
     # demande). Cf. robot/emit.py. La page passe de ~10 Mo à ~0,3 Mo.
-    print("5/5 Génération de la page (signal léger) + fichiers statiques...")
+    print(f"[{code}] OK. Moyenne {moyenne} ({niveau(moyenne)}) "
+          f"| {date_donnees} | {len(features)} mailles rendues")
+    return payload
+
+
+def main():
+    """Rend TOUS les départements actifs sur une même page. Chaque département a
+    ses fichiers geom_<code>/hist_<code> externes ; la page n'embarque que le
+    signal du jour (cf. emit.py). Un département sans données est ignoré."""
     from emit import ecrire_sorties
     import os as _os
-    params = {
-        "lag_indicatif": LAG_JOURS_PLAINE,
-        "versant_k": VERSANT_K,
-        "choc": payload["choc"],
-        "essence_groupes": essence_groupes,
-    }
+    print("Pluviomètres (correction locale, multi-départements)...")
+    try:
+        stations = fetch_stations()
+        print(f"    {len(stations)} stations")
+    except Exception as e:
+        stations = []
+        print(f"    ⚠ stations indisponibles ({type(e).__name__}: {e})")
+
+    resultats = []
+    params = None
+    for code in ACTIVE_DEPARTEMENTS:
+        d = DEPARTEMENTS.get(code)
+        if not d:
+            print(f"  ⚠ {code} absent du registre — ignoré"); continue
+        ctx = dict(d); ctx["code"] = code
+        try:
+            payload = traiter_departement(ctx, stations, emettre_stations=(len(resultats) == 0))
+        except Exception as e:
+            # Résilience : un département en échec (données manquantes ou hoquet
+            # d'une API) est ignoré pour ce run, sans vider toute la page.
+            print(f"  ⚠ {code} ignoré ({type(e).__name__}: {e})"); continue
+        resultats.append((code, d["nom"], payload))
+        if params is None:
+            params = {"lag_indicatif": LAG_JOURS_PLAINE, "versant_k": VERSANT_K,
+                      "choc": payload["choc"],
+                      "essence_groupes": payload["essence_groupes"]}
+    if not resultats:
+        raise SystemExit("Aucun département généré.")
     out_dir = _os.path.dirname(SITE_OUTPUT) or "."
-    infos = ecrire_sorties([(DEPARTEMENT_CODE, NOM_DEPARTEMENT, payload)],
-                           SITE_TEMPLATE, out_dir, params)
+    infos = ecrire_sorties(resultats, SITE_TEMPLATE, out_dir, params)
+    print("\nSorties :")
     for _name, _mb in infos.items():
         print(f"    {_name:22} {_mb:.3f} Mo")
-
-    print(f"\nOK. Moyenne département : {moyenne} ({niveau(moyenne)}) "
-          f"| données du {date_donnees} | {len(features)} mailles")
 
 
 if __name__ == "__main__":

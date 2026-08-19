@@ -70,15 +70,15 @@ def lister_sources(an_min=None):
     return urls
 
 
-def charger_grille():
-    mp = json.load(open(GRILLE_MAP, encoding="utf-8"))
+def charger_grille(path=GRILLE_MAP):
+    mp = json.load(open(path, encoding="utf-8"))
     # (lambx, lamby) -> maille_id
     rev = {(v[0], v[1]): mid for mid, v in mp.items()}
     return mp, rev
 
 
-def charger_coef():
-    cells = json.load(open(TERRAIN_FILE, encoding="utf-8"))["cellules"]
+def charger_coef(path=TERRAIN_FILE):
+    cells = json.load(open(path, encoding="utf-8"))["cellules"]
     coef = {}
     for c in cells:
         coef[c["maille_id"]] = (c["coef_terrain"] * c.get("coef_foret", 1.0)
@@ -182,7 +182,7 @@ def _next(d):
     return (datetime.strptime(d, "%Y-%m-%d").date() + timedelta(days=1)).isoformat()
 
 
-def historique_a_jour():
+def historique_a_jour(hist_out=HIST_OUT, grille_map=GRILLE_MAP, terrain_file=TERRAIN_FILE):
     """Charge data/historique.json (committé) et le complète avec les jours
     récents non encore présents (SAFRAN année courante + 'latest'), sans le
     réécrire. Renvoie {"debut","fin","n_jours","dates","mailles"} ou None si le
@@ -190,9 +190,9 @@ def historique_a_jour():
 
     Lignée SAFRAN de bout en bout : mêmes SWI/pluie/température que le backfill,
     donc le rejeu long est homogène (pas de mélange avec la source du jour)."""
-    if not os.path.exists(HIST_OUT):
+    if not os.path.exists(hist_out):
         return None
-    h = json.load(open(HIST_OUT, encoding="utf-8"))
+    h = json.load(open(hist_out, encoding="utf-8"))
     dates = h["dates"]
     par = {}
     for mid, arr in h["mailles"].items():
@@ -207,8 +207,8 @@ def historique_a_jour():
     hmax = dates[-1] if dates else DEBUT
 
     try:
-        _, rev = charger_grille()
-        coef = charger_coef()
+        _, rev = charger_grille(grille_map)
+        coef = charger_coef(terrain_file)
         urls = lister_sources(an_min=date.today().year)   # année courante + latest
         data = moissonner(urls, rev)
         recent = series_par_maille(data, coef, debut=_next(hmax))

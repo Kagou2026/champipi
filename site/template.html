@@ -289,7 +289,7 @@ function mergeDeptInline(){
     const dp=DEPTDATA[code]||{};
     Object.assign(mailles, dp.mailles||{});
     (dp.top||[]).forEach(t=>top.push(t));
-    (dp.stations||[]).forEach(s=>stations.push(s));
+    (dp.stations||[]).forEach(s=>{ if(!stations.some(x=>x.num===s.num)) stations.push(s); });
     if(dp.stations_date) sdate=dp.stations_date;
     nb += dp.nb_mailles||0;
     if(dp.date_donnees && (!dd || dp.date_donnees>dd)) dd=dp.date_donnees;
@@ -306,6 +306,10 @@ function mergeDeptInline(){
   D.prevision = prevDates? {dates:prevDates, mailles:prevMailles} : null;
 }
 mergeDeptInline();
+// Titre : reflète les départements chargés (« cèpes en Lozère · Gard · Ardèche »).
+(function(){ const sp=document.querySelector("header h1 span");
+  if(sp && DEPTS.length){ sp.textContent = "· cèpes en "+DEPTS.map(d=>d.nom).join(" · "); }
+  if(DEPTS.length){ document.title = "Champipi — "+DEPTS.map(d=>d.nom).join(" · "); } })();
 
 // En-tête département (état initial ; réécrit par appliquer() au fil du rejeu).
 document.getElementById("dept-date").textContent =

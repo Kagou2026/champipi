@@ -892,7 +892,7 @@ function hIndex(date){ if(!H||!date) return -1; const i=HDATES.indexOf(date); if
   let best=-1,bd=Infinity; const td=new Date(date+"T00:00:00Z").getTime();
   for(let j=0;j<HDATES.length;j++){const d=Math.abs(new Date(HDATES[j]+"T00:00:00Z").getTime()-td); if(d<bd){bd=d;best=j;}} return best; }
 
-function couleurObs(r){ if(r==null) return "#777";
+function couleurObs(r){ if(r==null) return "#8e24aa";
   if(r>=8) return "#1b5e20"; if(r>=5) return "#7cb342"; if(r>=3) return "#f9a825";
   if(r>=1) return "#ef6c00"; return "#b71c1c"; }
 
@@ -903,9 +903,9 @@ function obsRefresh(){
   if(!show || show.checked){
     OBS.forEach(o=>{
       const vide=o.result==null;   // GPX importé non renseigné : marqueur distinct
-      const mk=L.circleMarker([o.lat,o.lon],{radius:7,weight:2,
-        color:vide?"#555":"#fff", dashArray:vide?"3":null,
-        fillColor:couleurObs(o.result),fillOpacity:vide?0.35:0.95});
+      const mk=L.circleMarker([o.lat,o.lon],{radius:vide?8:7,weight:vide?3:2,
+        color:"#fff", dashArray:vide?"4 3":null,
+        fillColor:vide?"#8e24aa":couleurObs(o.result),fillOpacity:vide?0.92:0.95});
       mk.on("click",(e)=>{L.DomEvent.stop(e); montrerObs(o);});
       mk.bindTooltip(`${vide?"à renseigner":o.result+"/10"} · ${frDate(o.date)}`);
       obsLayer.addLayer(mk);

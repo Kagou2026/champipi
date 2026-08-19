@@ -83,6 +83,32 @@ def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None)
         w_hist = hist_m.get(mid, {}).get("w") if hist_m else None
         swi = (w_hist[-1] if w_hist and w_hist[-1] is not None else m.get("swi"))
         pvdates = sorted(pv)
+
+        def _om_cumul15(day_iso):
+            """Cumul de pluie Open-Meteo sur la fenêtre 15 j finissant à day_iso."""
+            dd0 = _date.fromisoformat(day_iso)
+            return sum(pv[x]["precip"] for x in pvdates
+                       if pv[x]["precip"] is not None
+                       and 0 <= (dd0 - _date.fromisoformat(x)).days <= 14)
+
+        # RACCORD DE COUTURE (pluie 15 j) — même principe que l'ancre du SWI.
+        # Le passé affiche le cumul SAFRAN ; la prévision, recalculée sur
+        # Open-Meteo, sautait d'un cran au 1er jour futur (deux sources de pluie
+        # qui ne s'accordent pas → « marche » à aujourd'hui). On ancre donc le
+        # cumul de prévision sur la dernière valeur SAFRAN et on ne garde
+        # d'Open-Meteo que les VARIATIONS :
+        #   pluie15j(d) = cumul_OM(d) − Δ·w(d)
+        #   Δ = cumul_OM(hist_fin) − cumul_SAFRAN(hist_fin)   (l'écart à combler)
+        # w passe de 1 (jour de la couture → continuité parfaite) à 0 en 15 j,
+        # quand la fenêtre ne contient plus aucun jour SAFRAN (→ 100 % Open-Meteo).
+        # NB : ce raccord assure la COHÉRENCE, pas la justesse (SAFRAN 8 km lisse
+        # les orages locaux) ; l'exactitude viendra des pluviomètres quotidiens.
+        # Cf. mémoire projet champipi-pluie-fiabilite.
+        p_hist = hist_m.get(mid, {}).get("p") if hist_m else None
+        c_safran = p_hist[-1] if p_hist and p_hist[-1] is not None else None
+        delta_pluie = (_om_cumul15(hist_fin) - c_safran) if c_safran is not None else 0.0
+        hf = _date.fromisoformat(hist_fin)
+
         # projection du SWI jour par jour au-delà de l'ancre (hist_fin)
         swi_by = {}
         cur = swi
@@ -97,9 +123,11 @@ def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None)
         cols = {k: [None] * len(dates) for k in ("i", "s", "w", "p", "t")}
         for d in dates:
             dd = _date.fromisoformat(d)
-            p15 = sum(pv[x]["precip"] for x in pvdates
-                      if pv[x]["precip"] is not None
-                      and 0 <= (dd - _date.fromisoformat(x)).days <= 14)
+            p15 = _om_cumul15(d)
+            if c_safran is not None:
+                n = (dd - hf).days              # 1 au 1er jour de prévision
+                w = max(0.0, (15 - n) / 14.0)   # 1 → 0 sur 15 jours
+                p15 = max(0.0, p15 - delta_pluie * w)
             tp = pv[d].get("temp"); sw = swi_by.get(d)
             r = calcul_indice(sw, p15, tp, coef)
             R = refroidissement([pv[x].get("temp") for x in pvdates if x <= d])

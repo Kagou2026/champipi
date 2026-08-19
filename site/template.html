@@ -7,6 +7,9 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<!-- Lecture des métadonnées photo (EXIF/GPS) : JPEG + HEIC (iPhone) + PNG. Si ce
+     CDN ne répond pas, l'import photo bascule en saisie manuelle (marquer + dater). -->
+<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
 <style>
   :root{
     --n0:#9e9e9e; --n1:#b71c1c; --n2:#ef6c00; --n3:#f9a825; --n4:#7cb342; --n5:#2e7d32;
@@ -891,10 +894,14 @@ function obsRefresh(){
   const c=document.getElementById("obs-count"); if(c) c.textContent=OBS.length;
 }
 
-// Capture d'un point
+// Capture d'un point. captureThen (facultatif) détourne le prochain clic — utilisé
+// par l'import d'une photo sans GPS — au lieu d'ouvrir une nouvelle cueillette vide.
+let captureThen=null;
 function armerCapture(){ pendingCapture=true; map.getContainer().style.cursor="crosshair"; }
 function desarmerCapture(){ pendingCapture=false; map.getContainer().style.cursor=""; }
-function finirCapture(latlng){ desarmerCapture(); formulaireObs({lat:+latlng.lat.toFixed(5), lon:+latlng.lng.toFixed(5)}); }
+function finirCapture(latlng){ desarmerCapture();
+  const pos={lat:+latlng.lat.toFixed(5), lon:+latlng.lng.toFixed(5)};
+  if(captureThen){ const cb=captureThen; captureThen=null; cb(pos); } else formulaireObs(pos); }
 map.on("click",(e)=>{ if(pendingCapture) finirCapture(e.latlng); });
 function captureGPS(){
   if(!navigator.geolocation){ alert("Géolocalisation indisponible sur cet appareil."); return; }
@@ -906,17 +913,20 @@ function captureGPS(){
 
 function aujourdhui(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 
-// Formulaire de saisie / édition
-function formulaireObs(pos, o){
+// Formulaire de saisie / édition. opts (facultatif) : {preview, flagDate, after},
+// posé par l'import photo — aperçu de la photo, date à saisir, enchaînement de la file.
+function formulaireObs(pos, o, opts){
   desarmerCapture();
-  o = o || {};
+  o = o || {}; opts = opts || {};
   const lat = o.lat!=null? o.lat : pos.lat, lon = o.lon!=null? o.lon : pos.lon;
   const el=document.getElementById("detail");
   el.innerHTML=`
     <h2 style="margin:0 0 4px">${o.id?"Modifier":"Nouvelle"} cueillette</h2>
     <p class="hint">Position : ${lat.toFixed(5)}, ${lon.toFixed(5)} · maille ${nearestMaille(lat,lon)}</p>
+    ${opts.preview?`<img src="${opts.preview}" alt="aperçu photo" style="display:block;max-width:100%;max-height:190px;border-radius:10px;margin:2px 0 6px;object-fit:cover">`:""}
     <div class="obsform">
-      <label>Date</label><input type="date" id="o-date" max="${aujourdhui()}" value="${o.date||aujourdhui()}">
+      <label>Date${opts.flagDate?` <span style="color:#b26a00">— absente de la photo, à saisir</span>`:""}</label>
+      <input type="date" id="o-date" max="${aujourdhui()}" value="${o.date||(opts.flagDate?"":aujourdhui())}"${opts.flagDate?` style="border-color:#e0a25e;background:#fff8ef"`:""}>
       <label>Résultat de cueillette (0 = rien · 10 = abondant)</label>
       <div class="rrow"><input type="range" id="o-res" min="0" max="10" step="1" value="${o.result!=null?o.result:0}" style="flex:1">
         <span class="rval" id="o-resv">${o.result!=null?o.result:0}</span></div>
@@ -931,12 +941,14 @@ function formulaireObs(pos, o){
     </div>
     <div class="obsbtns">
       <button class="ok" id="o-save">Enregistrer</button>
-      <button id="o-cancel">Annuler</button>
+      <button id="o-cancel">${opts.after?"Passer":"Annuler"}</button>
     </div>`;
   document.getElementById("o-res").addEventListener("input",e=>{document.getElementById("o-resv").textContent=e.target.value;});
-  document.getElementById("o-cancel").addEventListener("click",fermerDetail);
+  document.getElementById("o-cancel").addEventListener("click", opts.after || fermerDetail);
   document.getElementById("o-save").addEventListener("click",()=>{
-    const dObs=document.getElementById("o-date").value||aujourdhui();
+    const dEl=document.getElementById("o-date");
+    let dObs=dEl.value;
+    if(!dObs){ if(opts.flagDate){ alert("Indiquez la date de la photo."); dEl.focus(); return; } dObs=aujourdhui(); }
     const phObs=phaseLune(dObs);   // lune de la nuit précédant la cueillette
     const obs={ id:o.id||("o"+Date.now()), lat, lon,
       date:dObs,
@@ -948,7 +960,8 @@ function formulaireObs(pos, o){
       saisi_le:new Date().toISOString().slice(0,16).replace("T"," ") };
     const i=OBS.findIndex(x=>x.id===obs.id);
     if(i>=0) OBS[i]=obs; else OBS.push(obs);
-    obsSave(); obsRefresh(); montrerObs(obs);
+    obsSave(); obsRefresh();
+    if(opts.after) opts.after(); else montrerObs(obs);   // import photo : passe à la suivante
   });
 }
 
@@ -1064,6 +1077,74 @@ async function obsImport(files){
     +". Total : "+OBS.length+".");
 }
 
+// --- Import de photos (métadonnées EXIF : date + position GPS) --------------
+// Chaque photo devient une cueillette. exifr (chargé en CDN) lit JPEG/HEIC/PNG.
+// Photo géotaguée + datée → fiche pré-remplie. Sans GPS → on demande de pointer
+// l'endroit sur la carte. Sans date → le champ Date est signalé et requis.
+function _isoDate(dt){
+  if(!dt) return null;
+  if(dt instanceof Date && !isNaN(dt))
+    return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0");
+  const m=String(dt).match(/(\d{4})[:\-\/](\d{2})[:\-\/](\d{2})/);
+  return m? `${m[1]}-${m[2]}-${m[3]}` : null;
+}
+// Lit date + lat/lon d'une image. Renvoie {date,lat,lon} (champs nuls si absents).
+async function lireMetaPhoto(f){
+  let date=null, lat=null, lon=null;
+  if(window.exifr){
+    try{ const g=await exifr.gps(f);
+      if(g && isFinite(g.latitude) && isFinite(g.longitude)){
+        lat=+(+g.latitude).toFixed(5); lon=+(+g.longitude).toFixed(5); } }catch(e){}
+    try{ const o=await exifr.parse(f,["DateTimeOriginal","CreateDate","ModifyDate"]);
+      if(o) date=_isoDate(o.DateTimeOriginal||o.CreateDate||o.ModifyDate); }catch(e){}
+  }
+  return {date, lat, lon};
+}
+let PHOTO_Q=[];   // file d'attente des photos en cours d'import
+async function photoImport(files){
+  if(!window.exifr &&
+     !confirm("Lecture des métadonnées photo indisponible (CDN hors-ligne ?). "+
+              "Importer quand même en saisie manuelle (position + date à renseigner) ?")) return;
+  const items=[];
+  for(const f of Array.from(files)){
+    const meta = window.exifr ? await lireMetaPhoto(f) : {date:null,lat:null,lon:null};
+    items.push({name:f.name, date:meta.date, lat:meta.lat, lon:meta.lon,
+                thumb:URL.createObjectURL(f)});
+  }
+  PHOTO_Q = items;
+  photoNext();
+}
+// Traite la photo suivante de la file (une fiche à la fois).
+function photoNext(){
+  if(!PHOTO_Q.length){ desarmerCapture(); captureThen=null; fermerDetail(); return; }
+  const it=PHOTO_Q.shift();
+  const o={ date:it.date||null, note:"📷 "+(it.name||"photo") };
+  const opts={ preview:it.thumb, flagDate:!it.date, after:photoNext };
+  if(it.lat!=null && it.lon!=null){                 // géotaguée → fiche pré-remplie
+    map.setView([it.lat,it.lon], Math.max(map.getZoom(),13));
+    formulaireObs({lat:it.lat, lon:it.lon}, o, opts);
+  } else {                                          // sans GPS → pointer l'endroit
+    photoAskLocation(it, o, opts);
+  }
+}
+// Photo sans GPS : aperçu + demande de cliquer l'endroit sur la carte.
+function photoAskLocation(it, o, opts){
+  const el=document.getElementById("detail");
+  el.innerHTML=`
+    <h2 style="margin:0 0 6px">📷 Localiser la photo</h2>
+    <p class="hint"><b>${it.name||"photo"}</b> ne contient pas de position GPS${it.date?` (prise le ${frDate(it.date)})`:""}.
+       Cliquez sur la carte l'endroit où elle a été prise.</p>
+    <img src="${it.thumb}" alt="aperçu photo" style="display:block;max-width:100%;max-height:200px;border-radius:10px;margin:6px 0;object-fit:cover">
+    <div class="obsbtns"><button id="ph-skip">Passer cette photo</button></div>`;
+  const skip=document.getElementById("ph-skip");
+  if(skip) skip.addEventListener("click",()=>{ captureThen=null; photoNext(); });
+  captureThen=(pos)=>formulaireObs(pos, o, opts);
+  armerCapture();
+  // Sur mobile la feuille se replie : un rappel explicite évite l'hésitation.
+  if(window.matchMedia && window.matchMedia("(max-width:760px)").matches)
+    alert("Photo sans position GPS — touchez sur la carte l'endroit où elle a été prise.");
+}
+
 // Contrôle carte
 const obsCtrl=L.control({position:"topleft"});
 obsCtrl.onAdd=function(){
@@ -1077,6 +1158,9 @@ obsCtrl.onAdd=function(){
     <div class="obs-row">
       <button id="obs-exp" type="button">Exporter</button>
       <label class="obs-imp">Importer<input type="file" id="obs-imp" accept=".json,application/json,.gpx,application/gpx+xml" multiple hidden></label>
+    </div>
+    <div class="obs-row">
+      <label class="obs-imp" title="Date + position lues dans la photo">📷 Photo<input type="file" id="photo-imp" accept="image/*,.heic,.heif" multiple hidden></label>
       <label><input type="checkbox" id="obs-show" checked> voir</label>
     </div>`;
   L.DomEvent.disableClickPropagation(div);
@@ -1089,6 +1173,7 @@ document.getElementById("obs-add").addEventListener("click",()=>{ armerCapture()
 document.getElementById("obs-gps").addEventListener("click",captureGPS);
 document.getElementById("obs-exp").addEventListener("click",obsExport);
 document.getElementById("obs-imp").addEventListener("change",e=>{ if(e.target.files.length) obsImport(e.target.files); e.target.value=""; });
+document.getElementById("photo-imp").addEventListener("change",e=>{ if(e.target.files.length) photoImport(e.target.files); e.target.value=""; });
 document.getElementById("obs-show").addEventListener("change",obsRefresh);
 
 obsLoad(); obsRefresh();

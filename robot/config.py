@@ -272,8 +272,15 @@ VERSANT_AIRE_MIN_HA = 0.5        # on jette les faces < 0.5 ha (bruit)
 # CORRIGER localement le cumul 15 j de SAFRAN, trop lissé à 8 km pour les orages
 # cévenols. Cf. mémoire projet champipi-pluie-fiabilite.
 STATION_DEPTS = ["48", "07", "12", "15", "30", "43"]
-STATION_CSV_URL = ("https://meteofrance.s3.sbg.io.cloud.ovh.net/data/synchro_ftp/"
-                   "BASE/QUOT/Q_{dep}_latest-2025-2026_RR-T-Vent.csv.gz")
+# DEUX réseaux Météo-France par département : principal (QUOT) + complémentaire
+# (QUOT_COMP, essentiellement des pluviomètres RR — ~+70 % de stations, souvent
+# plus proches du terrain). On lit les deux et on fusionne par NUM_POSTE.
+STATION_CSV_URLS = [
+    ("https://meteofrance.s3.sbg.io.cloud.ovh.net/data/synchro_ftp/"
+     "BASE/QUOT/Q_{dep}_latest-2025-2026_RR-T-Vent.csv.gz"),        # réseau principal
+    ("https://meteofrance.s3.sbg.io.cloud.ovh.net/data/synchro_ftp/"
+     "BASE/QUOT_COMP/Q-COMP_{dep}_latest-2025-2026_RR-T-Vent.csv.gz"),  # complémentaire
+]
 STATION_FENETRE_JOURS = 30      # jours de pluie conservés (couvre la fenêtre 15 j du récent)
 # Interpolation relief-IDW station -> maille.
 STATION_IDW_PUISSANCE = 2.0     # exposant de l'inverse-distance

@@ -17,7 +17,7 @@ from datetime import date, timedelta
 
 import requests
 
-from config import STATION_DEPTS, STATION_CSV_URL, STATION_FENETRE_JOURS
+from config import STATION_DEPTS, STATION_CSV_URLS, STATION_FENETRE_JOURS
 
 
 def fetch_stations(depts=None, fenetre=None, timeout=120):
@@ -32,33 +32,36 @@ def fetch_stations(depts=None, fenetre=None, timeout=120):
     # on garde une marge (fenetre + 3 j) pour absorber le décalage de publication
     limite = (date.today() - timedelta(days=fenetre + 3)).strftime("%Y%m%d")
     stations = {}
+    # Deux réseaux (principal + complémentaire) par département, fusionnés par
+    # NUM_POSTE. Chaque source manquante est simplement sautée.
     for dep in depts:
-        url = STATION_CSV_URL.format(dep=dep)
-        try:
-            r = requests.get(url, timeout=timeout)
-            r.raise_for_status()
-        except requests.exceptions.RequestException:
-            continue
-        texte = gzip.decompress(r.content).decode("latin-1")
-        for row in csv.DictReader(io.StringIO(texte), delimiter=";"):
-            jour = row.get("AAAAMMJJ", "")
-            if not jour or jour < limite:
-                continue
-            num = row.get("NUM_POSTE")
+        for tmpl in STATION_CSV_URLS:
+            url = tmpl.format(dep=dep)
             try:
-                lat = float(row["LAT"]); lon = float(row["LON"])
-                alti = float(row["ALTI"])
-            except (TypeError, ValueError, KeyError):
+                r = requests.get(url, timeout=timeout)
+                r.raise_for_status()
+            except requests.exceptions.RequestException:
                 continue
-            st = stations.get(num)
-            if st is None:
-                st = stations[num] = {
-                    "num": num, "nom": (row.get("NOM_USUEL") or "").strip(),
-                    "lat": lat, "lon": lon, "alti": alti, "rr": {}}
-            try:
-                st["rr"][jour] = float(row["RR"])
-            except (TypeError, ValueError, KeyError):
-                pass  # RR manquant : on n'inscrit pas le jour (≠ 0 mm)
+            texte = gzip.decompress(r.content).decode("latin-1")
+            for row in csv.DictReader(io.StringIO(texte), delimiter=";"):
+                jour = row.get("AAAAMMJJ", "")
+                if not jour or jour < limite:
+                    continue
+                num = row.get("NUM_POSTE")
+                try:
+                    lat = float(row["LAT"]); lon = float(row["LON"])
+                    alti = float(row["ALTI"])
+                except (TypeError, ValueError, KeyError):
+                    continue
+                st = stations.get(num)
+                if st is None:
+                    st = stations[num] = {
+                        "num": num, "nom": (row.get("NOM_USUEL") or "").strip(),
+                        "lat": lat, "lon": lon, "alti": alti, "rr": {}}
+                try:
+                    st["rr"][jour] = float(row["RR"])
+                except (TypeError, ValueError, KeyError):
+                    pass  # RR manquant : on n'inscrit pas le jour (≠ 0 mm)
     return [s for s in stations.values() if s["rr"]]
 
 

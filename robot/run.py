@@ -22,7 +22,9 @@ from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
 from fetch_sim import fetch_sim_features, organiser_par_maille
 from fetch_temp import temperatures_par_maille
 from fetch_prevision import prevision_par_maille
+from fetch_stations import fetch_stations, cumul_15j, serie_15j
 from compute_index import calcul_indice, niveau, lag_jours, refroidissement, modulation_choc
+from stations import corrige
 from versant import stress_hydrothermique, indice_module
 from backfill_hist import historique_a_jour
 
@@ -141,6 +143,48 @@ def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None)
     return {"dates": dates, "mailles": out}
 
 
+def corrige_historique(historique, terrain, coef_par_maille, stations, jours=15):
+    """Corrige la QUEUE récente du long historique (w, p, i, s) par les stations.
+
+    Garantit que l'ANCRE du raccord de couture (dernier point) et le rejeu des
+    derniers jours sont cohérents avec la carte du jour (mêmes valeurs corrigées).
+    Le passé au-delà de `jours` reste SAFRAN (les stations ne couvrent que le
+    récent). No-op si pas de stations ou d'historique."""
+    if not historique or not stations:
+        return
+    from datetime import date as _d
+    dates = historique.get("dates") or []
+    if not dates:
+        return
+    fin = _d.fromisoformat(dates[-1])
+    recents = [k for k, dt in enumerate(dates)
+               if (fin - _d.fromisoformat(dt)).days <= jours]
+    cellinfo = {c["maille_id"]: c for c in terrain}
+    for mid, arr in historique["mailles"].items():
+        c = cellinfo.get(mid)
+        if not c:
+            continue
+        coef = coef_par_maille.get(mid, 1.0)
+        tser = arr.get("t", [])
+        for k in recents:
+            p = arr["p"][k] if k < len(arr["p"]) else None
+            if p is None:
+                continue
+            w = arr["w"][k] if k < len(arr["w"]) else None
+            t = tser[k] if k < len(tser) else None
+            w_c, p_c, _, _ = corrige(w, p, c.get("lat"), c.get("lon"),
+                                     c["altitude"], stations, dates[k])
+            if p_c == p and w_c == w:
+                continue   # aucune station utile ce jour-là → on garde SAFRAN
+            R = refroidissement(tser[:k + 1])
+            r = calcul_indice(w_c, p_c, t, coef)
+            arr["w"][k] = None if w_c is None else round(w_c, 3)
+            arr["p"][k] = round(p_c, 1)
+            arr["i"][k] = modulation_choc(r["indice"], R, t)
+            arr["s"][k] = (round(stress_hydrothermique(w_c, t), 3)
+                           if w_c is not None else None)
+
+
 def main():
     print("1/5 Chargement du terrain...")
     terrain = charger_terrain()
@@ -156,6 +200,20 @@ def main():
     print("3/5 Températures (Open-Meteo)...")
     coords = [(c["lat"], c["lon"]) for c in terrain]
     temps = temperatures_par_maille(coords)
+
+    # Pluviomètres quotidiens (48 + limitrophes) : correction LOCALE du cumul
+    # 15 j et poussée du SWI, là où SAFRAN 8 km lisse les orages cévenols.
+    # Best-effort : source externe indisponible → liste vide → correction neutre.
+    print("3b/5 Pluviomètres (correction locale)...")
+    try:
+        stations = fetch_stations()
+        print(f"    {len(stations)} stations (48 + limitrophes)")
+    except Exception as e:
+        stations = []
+        print(f"    ⚠ stations indisponibles ({type(e).__name__}: {e}) — "
+              f"correction désactivée")
+
+    coef_par_maille = {}   # pour corriger ensuite la queue du long historique
 
     print("4/5 Calcul de l'indice par maille...")
     # `mailles` : détail complet par maille (série 15 j, sous-scores...), indexé
@@ -180,7 +238,9 @@ def main():
         coef_foret = cell.get("coef_foret", 1.0)
         coef_essence = cell.get("coef_essence", 1.0)
         coef = coef_geo * coef_foret * coef_essence
+        coef_par_maille[mid] = coef
         hist_sim = sim.get(mid, {}).get("historique", [])
+        lat_c, lon_c, alt_c = cell.get("lat"), cell.get("lon"), cell["altitude"]
 
         # Série de température moyenne (Open-Meteo) pour le CHOC THERMIQUE :
         # un refroidissement récent déclenche la fructification (cf. compute_index).
@@ -196,16 +256,25 @@ def main():
         serie = []
         for h in hist_sim:
             t_h = temp_du(h["date"])
-            r = calcul_indice(h["swi"], h["pluie_15j"], t_h, coef)
+            # correction locale par les stations (SWI + pluie 15 j)
+            swi_h, p_h, _, _ = corrige(h["swi"], h["pluie_15j"],
+                                       lat_c, lon_c, alt_c, stations, h["date"])
+            r = calcul_indice(swi_h, p_h, t_h, coef)
             ind_h = modulation_choc(r["indice"], R_at(h["date"]), t_h)
-            serie.append({"date": h["date"], "swi": h["swi"],
-                          "pluie_15j": h["pluie_15j"], "temp": t_h,
+            serie.append({"date": h["date"], "swi": swi_h,
+                          "pluie_15j": p_h, "temp": t_h,
                           "indice": ind_h,
-                          "stress": round(stress_hydrothermique(h["swi"], t_h), 3)})
+                          "stress": round(stress_hydrothermique(swi_h, t_h), 3)})
 
         dernier = hist_sim[-1] if hist_sim else {}
         temp = temp_du(dernier.get("date"))   # température du jour courant
-        res = calcul_indice(dernier.get("swi"), dernier.get("pluie_15j"), temp, coef)
+        # Correction locale du jour courant : swi_j/pluie_j corrigés, plus les
+        # valeurs SAFRAN brutes et la confiance α (transparence dans la fiche).
+        swi_saf = dernier.get("swi"); p_saf = dernier.get("pluie_15j")
+        swi_j, p_j, alpha_j, est_j = corrige(swi_saf, p_saf, lat_c, lon_c, alt_c,
+                                             stations, dernier.get("date")) \
+            if dernier else (swi_saf, p_saf, 0.0, None)
+        res = calcul_indice(swi_j, p_j, temp, coef)
         # Indice du jour modulé par le choc thermique (refroidissement récent).
         indice_jour = modulation_choc(res["indice"], R_at(dernier.get("date")), temp)
         niv_jour = niveau(indice_jour)
@@ -215,7 +284,7 @@ def main():
         # Stress hydro-thermique du jour (+1 sec/chaud, -1 froid/humide) : pilote
         # le SIGNE de la modulation versant (cf. versant.py). Identique au
         # dernier point de `serie` pour que carte du jour et curseur coïncident.
-        stress = stress_hydrothermique(dernier.get("swi"), temp)
+        stress = stress_hydrothermique(swi_j, temp)
 
         mailles[mid] = {
             "maille_id": mid,
@@ -223,8 +292,12 @@ def main():
             "lon": cell.get("lon"),
             "indice": indice_jour,
             "niveau": niv_jour,
-            "swi": dernier.get("swi"),
-            "pluie_15j": dernier.get("pluie_15j"),
+            "swi": swi_j,
+            "pluie_15j": p_j,
+            "swi_safran": swi_saf,
+            "pluie_15j_safran": p_saf,
+            "pluie_15j_stations": None if est_j is None else round(est_j, 1),
+            "correction_alpha": round(alpha_j, 2),
             "anomalie_swi": dernier.get("anomalie_swi"),
             "temp": temp,
             "altitude": cell["altitude"],
@@ -327,6 +400,8 @@ def main():
     if historique:
         print(f"    {historique['n_jours']} jours "
               f"({historique['debut']} → {historique['fin']})")
+        # Correction locale de la queue récente (ancre du raccord + rejeu cohérents).
+        corrige_historique(historique, terrain, coef_par_maille, stations)
 
     print("    Prévision de sortie (Open-Meteo)…")
     hist_fin = historique["fin"] if historique else date_donnees
@@ -343,6 +418,27 @@ def main():
         print(f"    ⚠ prévision indisponible ({type(e).__name__}: {e}) — "
               f"site publié sans le bloc prévision.")
 
+    # Stations météo pour le calque carte (position + fiche + pluie 15 j).
+    # Sources mêmes que la correction ; on expose leur cumul et leur série.
+    stations_payload = []
+    stations_date = None
+    if stations:
+        jours_dispo = set()
+        for s in stations:
+            jours_dispo.update(s["rr"])
+        if jours_dispo:
+            fin_st = max(jours_dispo)
+            stations_date = f"{fin_st[:4]}-{fin_st[4:6]}-{fin_st[6:]}"
+            for s in stations:
+                c15 = cumul_15j(s, stations_date)
+                stations_payload.append({
+                    "num": s["num"], "nom": s["nom"],
+                    "lat": round(s["lat"], 5), "lon": round(s["lon"], 5),
+                    "alti": round(s["alti"]),
+                    "cumul_15j": None if c15 is None else round(c15, 1),
+                    "serie": [[d, v] for d, v in serie_15j(s, stations_date)],
+                })
+
     payload = {
         "genere_le": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M"),
         "date_donnees": date_donnees,
@@ -358,6 +454,8 @@ def main():
         "essence_groupes": essence_groupes,
         "top": top,
         "mailles": mailles,
+        "stations": stations_payload,
+        "stations_date": stations_date,
         "historique": historique,
         "prevision": prevision,
         "geojson": {"type": "FeatureCollection", "features": features},

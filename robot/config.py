@@ -264,3 +264,26 @@ VERSANT_POIDS_THERMIQUE = 0.40
 VERSANT_SIMPLIFY_M = 120         # tolérance de simplification (m)
 VERSANT_COORD_DECIMALES = 5      # arrondi des coordonnées WGS84 (~1 m)
 VERSANT_AIRE_MIN_HA = 0.5        # on jette les faces < 0.5 ha (bruit)
+
+# --- Pluviomètres quotidiens Météo-France (correction locale de la pluie) ----
+# Données open-data SANS clé (« Données climatologiques de base - quotidiennes »).
+# Un CSV.gz par département sur le S3 OVH. On lit la Lozère ET ses voisins (une
+# maille de bord est mieux servie par une station du département d'à côté), pour
+# CORRIGER localement le cumul 15 j de SAFRAN, trop lissé à 8 km pour les orages
+# cévenols. Cf. mémoire projet champipi-pluie-fiabilite.
+STATION_DEPTS = ["48", "07", "12", "15", "30", "43"]
+STATION_CSV_URL = ("https://meteofrance.s3.sbg.io.cloud.ovh.net/data/synchro_ftp/"
+                   "BASE/QUOT/Q_{dep}_latest-2025-2026_RR-T-Vent.csv.gz")
+STATION_FENETRE_JOURS = 30      # jours de pluie conservés (couvre la fenêtre 15 j du récent)
+# Interpolation relief-IDW station -> maille.
+STATION_IDW_PUISSANCE = 2.0     # exposant de l'inverse-distance
+STATION_ALT_ECHELLE_M = 350.0   # poids altitude = exp(-|Δalt|/échelle)
+STATION_RAYON_KM = 35.0         # au-delà : station ignorée pour la maille
+# Confiance α = min(1, Σ 1/(1+(d/dref)²) / conf_ref) : ~1 si stations proches/nombreuses.
+STATION_DIST_REF_KM = 8.0
+STATION_CONF_REF = 1.5
+# Poussée du SWI (option b) : le SWI SAFRAN (modèle de sol) ignore un orage local.
+# On le remonte d'un cran borné, proportionnel à l'excédent de pluie observé :
+#   SWI += α · clamp((estimé − SAFRAN) / SWI_NUDGE_MM_PAR_UNITE, 0, SWI_NUDGE_MAX)
+SWI_NUDGE_MM_PAR_UNITE = 120.0  # mm d'excédent pour +1.0 de SWI (heuristique, à caler)
+SWI_NUDGE_MAX = 0.35            # plafond du coup de pouce (garde-fou)

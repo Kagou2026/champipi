@@ -109,6 +109,20 @@
     box-shadow:0 1px 4px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center}
   .locctrl button:hover{background:#f2f1ec}
   .locctrl button:disabled{opacity:.5;cursor:default}
+  /* Calque « stations météo » (pluviomètres source de la correction) */
+  .statctrl{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:10px;
+    padding:7px 9px;font-size:12px;box-shadow:0 1px 6px rgba(0,0,0,.12);max-width:210px}
+  .statctrl .pill{background:#f0efe9;border-radius:20px;padding:1px 7px;font-weight:600}
+  .statctrl input{margin:0;cursor:pointer}
+  .stat-note{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.3}
+  .statpop b{font-size:13px}
+  .statpop .sp-sub{color:var(--muted);font-size:11px;margin-bottom:5px}
+  .statpop .sp-big{font-weight:700;font-size:16px;margin:2px 0 6px}
+  .statpop .sp-big span{font-weight:400;font-size:11px;color:var(--muted)}
+  .statpop .spark{display:flex;align-items:flex-end;gap:2px;height:42px;margin:2px 0}
+  .statpop .sbar{flex:1;display:flex;align-items:flex-end;justify-content:center;min-width:6px}
+  .statpop .sbar i{display:block;width:100%;border-radius:1px 1px 0 0}
+  .statpop .sp-foot{font-size:10px;color:var(--muted);margin-top:3px}
   /* ====================== MOBILE ====================== */
   @media(max-width:760px){
     header{padding:9px 14px;gap:8px}
@@ -1233,6 +1247,63 @@ remplirDefaut();
 remplirFoot();
 
 // ============================================================================
+// Calque « Stations météo » : pluviomètres Météo-France (48 + limitrophes) qui
+// servent à corriger localement la pluie. Marqueur à la position, fiche avec le
+// cumul 15 j et la série quotidienne (barres). OFF par défaut (évite la surcharge).
+// Enveloppé try/catch et placé AVANT le bloc mobile : ne peut pas casser le tactile.
+// ============================================================================
+try{
+  const STA = D.stations || [];
+  if(STA.length){
+    // Échelle de couleur pour la pluie 15 j (mm) — bleus, pour se distinguer de
+    // l'indice (vert) et des cueillettes (violet/rouge).
+    const couleurPluie=(mm)=>{ if(mm==null) return "#9e9e9e";
+      if(mm>=50) return "#0d47a1"; if(mm>=30) return "#1976d2";
+      if(mm>=15) return "#42a5f5"; if(mm>=5) return "#90caf9"; return "#cfd8dc"; };
+    const statLayer=L.layerGroup();   // pas ajouté à la carte : OFF au départ
+    const ficheStation=(s)=>{
+      const serie=s.serie||[];
+      const vals=serie.map(x=>x[1]).filter(v=>v!=null);
+      const mx=Math.max(1,...vals);
+      const bars=serie.map(x=>{ const v=x[1];
+        const h=(v==null||v<=0)?1:Math.round(4+34*v/mx);
+        const t=(v==null?"—":v+" mm")+" · "+frDate(x[0]);
+        return `<div class="sbar" title="${t}"><i style="height:${h}px;background:${couleurPluie(v)}"></i></div>`;
+      }).join("");
+      return `<div class="statpop">
+        <b>${s.nom||s.num}</b>
+        <div class="sp-sub">${s.alti!=null?Math.round(s.alti)+" m":""} · station Météo-France</div>
+        <div class="sp-big">${s.cumul_15j!=null?s.cumul_15j+" mm":"—"} <span>sur 15 j</span></div>
+        <div class="spark">${bars}</div>
+        <div class="sp-foot">Pluie quotidienne (mm) — 15 derniers jours${D.stations_date?" (au "+frDate(D.stations_date)+")":""}</div>
+      </div>`;
+    };
+    STA.forEach(s=>{
+      const mk=L.circleMarker([s.lat,s.lon],{radius:6,weight:1.5,color:"#fff",
+        fillColor:couleurPluie(s.cumul_15j),fillOpacity:.92});
+      mk.bindTooltip(`${s.nom||s.num} · ${s.cumul_15j!=null?s.cumul_15j+" mm/15j":"—"}`);
+      mk.bindPopup(ficheStation(s),{maxWidth:270});
+      statLayer.addLayer(mk);
+    });
+    const statCtrl=L.control({position:"topright"});
+    statCtrl.onAdd=function(){
+      const div=L.DomUtil.create("div","statctrl");
+      div.innerHTML=`<label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="stat-show"> 🌧️ Stations météo <span class="pill">${STA.length}</span></label>
+        <div class="stat-note">Pluviomètres, source de la correction locale de la pluie.</div>`;
+      L.DomEvent.disableClickPropagation(div);
+      L.DomEvent.disableScrollPropagation(div);
+      return div;
+    };
+    statCtrl.addTo(map);
+    const sc=document.getElementById("stat-show");
+    if(sc) sc.addEventListener("change",e=>{
+      if(e.target.checked) statLayer.addTo(map); else map.removeLayer(statLayer);
+    });
+  }
+}catch(_){}
+
+// ============================================================================
 // Ergonomie mobile : feuille glissante + contrôles repliés en icônes.
 // Tout est gated par IS_MOBILE ; le bureau n'est pas affecté.
 // ============================================================================
@@ -1299,6 +1370,7 @@ if(IS_MOBILE){
   makeCollapsible(document.querySelector(".filtre"),  "🌲");
   makeCollapsible(document.querySelector(".obsctrl"), "🧺");
   makeCollapsible(document.querySelector(".rejeu"),   "🕒");
+  makeCollapsible(document.querySelector(".statctrl"),"🌧️");
 }
 
 // ============================================================================

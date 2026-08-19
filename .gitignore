@@ -23,3 +23,7 @@ _public_test/
 _versant_cache/
 # Prototypes locaux (exploration versant) — non déployés, un fichier fait 38 Mo.
 prototypes/
+
+# Corbeille locale (deplacements, pas de rm depuis le pont) + script de push local
+_to_delete/
+git-push.sh

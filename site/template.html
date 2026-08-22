@@ -115,10 +115,19 @@
   .statctrl .pill{background:#f0efe9;border-radius:20px;padding:1px 7px;font-weight:600}
   .statctrl input{margin:0;cursor:pointer}
   .stat-note{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.3}
-  /* Marqueur station = petite jauge verticale à 4 cellules, remplie selon la pluie */
+  /* Marqueur station = jauge de pluie + (si T°) mini-thermomètre de choc à droite */
   .stmk-wrap{background:none;border:none}
+  .stmk-row{display:flex;align-items:flex-end;gap:2px}
   .stmk{position:relative;display:flex;flex-direction:column-reverse;gap:2px;width:17px;padding:2px;cursor:pointer;
     background:#fff;border:2px solid rgba(20,40,60,.7);border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+  /* Mini-thermomètre : niveau = intensité du choc, couleur = sens (bleu refroidissement,
+     rouge réchauffement, gris = stable). Affiché seulement si la station a une T°. */
+  .thermo{position:relative;width:8px;height:40px;flex:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
+  .thermo .tube{position:absolute;left:1px;right:1px;top:1px;bottom:6px;background:#fff;
+    border:1px solid rgba(20,40,60,.7);border-radius:3px 3px 0 0;overflow:hidden}
+  .thermo .tfill{position:absolute;left:0;right:0;bottom:0}
+  .thermo .bulb{position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:8px;height:8px;
+    border-radius:50%;border:1px solid rgba(20,40,60,.7);background:#fff}
   .stmk i{display:block;height:8px;border-radius:2px;background:#dbe1e6;box-shadow:inset 0 0 0 1px rgba(0,0,0,.10)}
   .stmk:hover{border-color:#0d47a1;box-shadow:0 2px 8px rgba(13,71,161,.6)}
   /* Pastille de fraîcheur (levier 1) : rien si à jour, orange si lacunaire,
@@ -1453,6 +1462,23 @@ function pluieCells(mm){ return mm==null?0 : mm>=50?4 : mm>=30?3 : mm>=15?2 : mm
 // Marqueur = petite jauge verticale à 4 cellules, remplie du bas selon la pluie.
 // `etat` (fraîcheur, levier 1) ajoute une pastille de coin : rien si à jour,
 // orange si lacunaire, gris + marqueur atténué si muette (probablement HS).
+// Couleur du choc thermique selon le score signé (score_choc ∈ [−1,+1]) :
+// bleu = refroidissement (favorable), rouge = réchauffement, gris = stable.
+function couleurChoc(score){ const m=Math.min(1,Math.abs(score||0));
+  if(m<0.05) return "#cfd8dc";
+  if(score>0) return m<0.5?"#64b5f6":(m<0.8?"#1976d2":"#0d47a1");
+  return m<0.5?"#ef9a9a":(m<0.8?"#ef6c00":"#b2182b"); }
+// Mini-thermomètre du choc thermique, à droite de la jauge. Rien si pas de T°.
+function thermoHTML(choc){
+  if(!choc) return "";                       // pluviomètre (pas de température)
+  const s=choc.score||0, m=Math.min(1,Math.abs(s)), col=couleurChoc(s);
+  const h=Math.round(12+m*88);               // niveau de mercure : 12 → 100 %
+  const sens = m<0.05 ? "T° stable"
+    : (s>0 ? `refroidissement (score ${m.toFixed(2)})` : `réchauffement (score ${m.toFixed(2)})`);
+  return `<div class="thermo" title="Choc thermique : ${sens}">`
+    +`<div class="tube"><div class="tfill" style="height:${h}%;background:${col}"></div></div>`
+    +`<div class="bulb" style="background:${col}"></div></div>`;
+}
 function jaugeHTML(mm, etat, choc){ const n=pluieCells(mm), col=couleurPluie(mm); let c="";
   for(let i=0;i<4;i++){ c+=`<i${i<n?` style="background:${col}"`:""}></i>`; }  // .stmk est en column-reverse : i=0 en bas
   const dot = etat==="lacunaire" ? `<span class="stdot lac" title="données lacunaires"></span>`
@@ -1461,7 +1487,8 @@ function jaugeHTML(mm, etat, choc){ const n=pluieCells(mm), col=couleurPluie(mm)
   const appel = !!(choc && choc.appel);
   const badge = appel ? `<span class="stchoc" title="choc thermique + sol humide : appel à pousse">❄</span>` : "";
   const cls = "stmk" + (etat==="muet"?" muet":"") + (appel?" choc":"");
-  return `<div class="${cls}" title="${mm!=null?mm+" mm / 15 j":"—"}">${dot}${badge}${c}</div>`; }
+  const jauge = `<div class="${cls}" title="${mm!=null?mm+" mm / 15 j":"—"}">${dot}${badge}${c}</div>`;
+  return `<div class="stmk-row">${jauge}${thermoHTML(choc)}</div>`; }
 
 // Traduction de l'état de fraîcheur en libellé + couleur + explication.
 function etatStation(s){ const e=s.etat||"ok";
@@ -1587,9 +1614,14 @@ try{
       const et=s.etat||"ok";
       const etTxt=et==="muet"?" · ⚠ muette (HS probable)":(et==="lacunaire"?" · données lacunaires":"");
       const chocTxt=(s.choc&&s.choc.appel)?" · ❄ choc thermique + sol humide":"";
+      // Icône plus large si thermomètre présent (jauge ~25 + thermo ~10) ; l'ancre
+      // reste sur la jauge (le point station), le thermomètre déborde à droite.
+      const hasT=!!s.choc;
       const mk=L.marker([s.lat,s.lon],{icon:L.divIcon({className:"stmk-wrap",
-        html:jaugeHTML(s.cumul_15j, et, s.choc), iconSize:[25,46], iconAnchor:[12,23]})});
-      mk.bindTooltip(`${s.nom||s.num} · ${s.cumul_15j!=null?s.cumul_15j+" mm/15j":"—"}${etTxt}${chocTxt}`);
+        html:jaugeHTML(s.cumul_15j, et, s.choc),
+        iconSize:[hasT?35:25,46], iconAnchor:[12,23]})});
+      const chocLvl=(s.choc&&s.choc.score!=null)?` · choc ${s.choc.score>0?"↓":s.choc.score<0?"↑":"="}${Math.abs(s.choc.score).toFixed(2)}`:"";
+      mk.bindTooltip(`${s.nom||s.num} · ${s.cumul_15j!=null?s.cumul_15j+" mm/15j":"—"}${etTxt}${chocTxt||chocLvl}`);
       mk.on("click",()=>montrerStation(s));   // détail dans le panneau latéral
       statLayer.addLayer(mk);
     });
@@ -1602,6 +1634,7 @@ try{
       div.innerHTML=`<label style="display:flex;align-items:center;gap:6px;cursor:pointer">
         <input type="checkbox" id="stat-show"> 🌧️ Stations météo <span class="pill">${STA.length}</span></label>
         <div class="stat-note">Pluviomètres + stations, source de la correction locale. Clic = détail.<br>
+        🌡 thermomètre = niveau de choc thermique (<span style="color:#0d47a1;font-weight:700">bleu</span> refroidissement, <span style="color:#b2182b;font-weight:700">rouge</span> réchauffement ; stations principales seulement).<br>
         <span class="lgd choc">❄</span>choc thermique + sol humide (appel à pousse)${nChoc?` — <b>${nChoc}</b> station${nChoc>1?"s":""}`:" — aucune aujourd'hui"}<br>
         <span class="lgd lac"></span>lacunaire · <span class="lgd muet"></span>muette (HS probable)${(nLac||nMuet)?` — ${nLac} lacunaire${nLac>1?"s":""}, ${nMuet} muette${nMuet>1?"s":""}`:" — toutes à jour"}</div>`;
       L.DomEvent.disableClickPropagation(div);

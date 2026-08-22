@@ -117,11 +117,21 @@
   .stat-note{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.3}
   /* Marqueur station = petite jauge verticale à 4 cellules, remplie selon la pluie */
   .stmk-wrap{background:none;border:none}
-  .stmk{display:flex;flex-direction:column-reverse;gap:2px;width:17px;padding:2px;cursor:pointer;
+  .stmk{position:relative;display:flex;flex-direction:column-reverse;gap:2px;width:17px;padding:2px;cursor:pointer;
     background:#fff;border:2px solid rgba(20,40,60,.7);border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,.5)}
   .stmk i{display:block;height:8px;border-radius:2px;background:#dbe1e6;box-shadow:inset 0 0 0 1px rgba(0,0,0,.10)}
   .stmk:hover{border-color:#0d47a1;box-shadow:0 2px 8px rgba(13,71,161,.6)}
-  /* Barres de pluie 15 j dans le panneau latéral (clic station) */
+  /* Pastille de fraîcheur (levier 1) : rien si à jour, orange si lacunaire,
+     gris + marqueur atténué si muette (probablement hors service). */
+  .stmk .stdot{position:absolute;top:-5px;right:-5px;width:9px;height:9px;border-radius:50%;
+    border:1.5px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.5);z-index:2}
+  .stmk .stdot.lac{background:#f9a825}
+  .stmk .stdot.muet{background:#9e9e9e}
+  .stmk.muet{opacity:.55;filter:grayscale(.45)}
+  .statctrl .lgd{display:inline-block;width:9px;height:9px;border-radius:50%;
+    border:1px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.25);vertical-align:-1px;margin-right:2px}
+  .statctrl .lgd.lac{background:#f9a825} .statctrl .lgd.muet{background:#9e9e9e}
+  /* Barres de pluie (fenêtre d'affichage) dans le panneau latéral (clic station) */
   .stbars{display:flex;align-items:flex-end;gap:3px;height:98px;padding:6px 0 2px}
   .stbars .sbar2{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
   .stbars .sbar2 i{display:block;width:100%;max-width:16px;border-radius:2px 2px 0 0;background:#cfd8dc}
@@ -1418,14 +1428,28 @@ function couleurPluie(mm){ if(mm==null) return "#9e9e9e";
 // Nombre de cellules pleines (0..4) selon le cumul 15 j — mêmes seuils que la couleur.
 function pluieCells(mm){ return mm==null?0 : mm>=50?4 : mm>=30?3 : mm>=15?2 : mm>=5?1 : 0; }
 // Marqueur = petite jauge verticale à 4 cellules, remplie du bas selon la pluie.
-function jaugeHTML(mm){ const n=pluieCells(mm), col=couleurPluie(mm); let c="";
+// `etat` (fraîcheur, levier 1) ajoute une pastille de coin : rien si à jour,
+// orange si lacunaire, gris + marqueur atténué si muette (probablement HS).
+function jaugeHTML(mm, etat){ const n=pluieCells(mm), col=couleurPluie(mm); let c="";
   for(let i=0;i<4;i++){ c+=`<i${i<n?` style="background:${col}"`:""}></i>`; }  // .stmk est en column-reverse : i=0 en bas
-  return `<div class="stmk" title="${mm!=null?mm+" mm / 15 j":"—"}">${c}</div>`; }
+  const dot = etat==="lacunaire" ? `<span class="stdot lac" title="données lacunaires"></span>`
+            : etat==="muet"      ? `<span class="stdot muet" title="station muette (probablement hors service)"></span>` : "";
+  const cls = etat==="muet" ? "stmk muet" : "stmk";
+  return `<div class="${cls}" title="${mm!=null?mm+" mm / 15 j":"—"}">${dot}${c}</div>`; }
+
+// Traduction de l'état de fraîcheur en libellé + couleur + explication.
+function etatStation(s){ const e=s.etat||"ok";
+  if(e==="muet") return {txt:"Muette", col:"#616161",
+    detail:`aucune donnée depuis ${s.retard_j!=null?s.retard_j+" j":"longtemps"} — poste probablement hors service ou fermé, écarté de la correction.`};
+  if(e==="lacunaire") return {txt:"Lacunaire", col:"#d98200",
+    detail:`données partielles${s.retard_j?", en retard de "+s.retard_j+" j sur le réseau":""} — prise en compte avec prudence.`};
+  return {txt:"À jour", col:"#2e7d32", detail:"données à jour avec le réseau."}; }
 
 // Détail d'une station dans le PANNEAU LATÉRAL (comme une maille/cueillette).
 function montrerStation(s){
   SELMID=null; SELFACE=null; if(chart){ chart.destroy(); chart=null; }
   const serie=s.serie||[];
+  const E=etatStation(s);
   const vals=serie.map(x=>x[1]).filter(v=>v!=null);
   const mx=Math.max(1,...vals);
   const jours=vals.filter(v=>v>0).length;
@@ -1447,12 +1471,15 @@ function montrerStation(s){
     </div>
     <p class="hint" style="margin-top:8px">Station Météo-France${s.num?" n°"+s.num:""}${s.alti!=null?" · "+Math.round(s.alti)+" m":""}. Pluviomètre du réseau qui sert à corriger localement la pluie de l'indice.</p>
     <div class="metrics">
+      ${metric("État station", `<span style="color:${E.col};font-weight:700">${E.txt}</span>`)}
+      ${metric("Dernière donnée", s.dernier?frDate(s.dernier):"—")}
       ${metric("Pluie cumulée 15 j", s.cumul_15j!=null?s.cumul_15j+" mm":"—")}
       ${metric("Jours de pluie", jours+" / "+serie.length)}
       ${metric("Max journalier", maxj!=null?maxj+" mm":"—")}
       ${metric("Altitude", s.alti!=null?Math.round(s.alti)+" m":"—")}
     </div>
-    <div style="font-size:12px;font-weight:650;margin:12px 0 2px">Pluie quotidienne — 15 derniers jours${D.stations_date?" (au "+frDate(D.stations_date)+")":""}</div>
+    <p class="hint" style="margin-top:6px">État : <b style="color:${E.col}">${E.txt}</b> — ${E.detail}</p>
+    <div style="font-size:12px;font-weight:650;margin:12px 0 2px">Pluie quotidienne — ${serie.length} derniers jours${D.stations_date?" (au "+frDate(D.stations_date)+")":""}</div>
     <div class="stbars">${bars}</div>
     <p class="hint">Barres = mm par jour (chiffre = quantième du mois). Les stations proches et d'altitude comparable pèsent le plus dans la correction (interpolation relief).</p>`;
   document.getElementById("d-back").addEventListener("click",fermerDetail);
@@ -1464,18 +1491,23 @@ try{
   if(STA.length){
     const statLayer=L.layerGroup();   // OFF au départ (ajouté au clic "voir")
     STA.forEach(s=>{
+      const et=s.etat||"ok";
+      const etTxt=et==="muet"?" · ⚠ muette (HS probable)":(et==="lacunaire"?" · données lacunaires":"");
       const mk=L.marker([s.lat,s.lon],{icon:L.divIcon({className:"stmk-wrap",
-        html:jaugeHTML(s.cumul_15j), iconSize:[25,46], iconAnchor:[12,23]})});
-      mk.bindTooltip(`${s.nom||s.num} · ${s.cumul_15j!=null?s.cumul_15j+" mm/15j":"—"}`);
+        html:jaugeHTML(s.cumul_15j, et), iconSize:[25,46], iconAnchor:[12,23]})});
+      mk.bindTooltip(`${s.nom||s.num} · ${s.cumul_15j!=null?s.cumul_15j+" mm/15j":"—"}${etTxt}`);
       mk.on("click",()=>montrerStation(s));   // détail dans le panneau latéral
       statLayer.addLayer(mk);
     });
+    const nLac=STA.filter(s=>s.etat==="lacunaire").length;
+    const nMuet=STA.filter(s=>s.etat==="muet").length;
     const statCtrl=L.control({position:"topright"});
     statCtrl.onAdd=function(){
       const div=L.DomUtil.create("div","statctrl");
       div.innerHTML=`<label style="display:flex;align-items:center;gap:6px;cursor:pointer">
         <input type="checkbox" id="stat-show"> 🌧️ Stations météo <span class="pill">${STA.length}</span></label>
-        <div class="stat-note">Pluviomètres, source de la correction locale. Clic = détail.</div>`;
+        <div class="stat-note">Pluviomètres, source de la correction locale. Clic = détail.<br>
+        <span class="lgd lac"></span>lacunaire · <span class="lgd muet"></span>muette (HS probable)${(nLac||nMuet)?` — ${nLac} lacunaire${nLac>1?"s":""}, ${nMuet} muette${nMuet>1?"s":""}`:" — toutes à jour"}</div>`;
       L.DomEvent.disableClickPropagation(div);
       L.DomEvent.disableScrollPropagation(div);
       return div;

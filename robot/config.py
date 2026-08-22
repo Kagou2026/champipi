@@ -336,3 +336,23 @@ STATION_CONF_REF = 1.5
 #   SWI += α · clamp((estimé − SAFRAN) / SWI_NUDGE_MM_PAR_UNITE, 0, SWI_NUDGE_MAX)
 SWI_NUDGE_MM_PAR_UNITE = 120.0  # mm d'excédent pour +1.0 de SWI (heuristique, à caler)
 SWI_NUDGE_MAX = 0.35            # plafond du coup de pouce (garde-fou)
+
+# --- Affichage station : fenêtre de la série quotidienne (barres du panneau) --
+# Purement COSMÉTIQUE : nombre de jours affichés dans la fiche d'une station.
+# N'entre PAS dans la correction — le cumul de correction reste sur 15 j (calé
+# sur la biologie du cèpe). La fenêtre de collecte (STATION_FENETRE_JOURS=30)
+# doit rester >= cette valeur.
+STATION_SERIE_JOURS = 20
+
+# --- Fraîcheur / santé des stations (levier 1 : repérer les postes muets) -----
+# On juge chaque station par rapport au FRONT du réseau (jour le plus récent
+# publié par l'ENSEMBLE des postes), pas par rapport à « aujourd'hui » : le
+# paquet climato Météo-France a un délai de publication de quelques jours, normal
+# et commun à tous les postes. Un poste très en retard sur ses voisins est donc
+# probablement muet (capteur HS ou poste fermé), pas seulement « en attente de
+# publication ». On ne PEUT PAS distinguer une vraie panne d'une fermeture depuis
+# cette source seule : l'état « muet » est un signal de fiabilité, pas un
+# diagnostic administratif.
+STATION_FRESH_OK_J = 2       # retard <= 2 j sur le réseau → à jour (vert)
+STATION_FRESH_MUET_J = 7     # retard > 7 j → muet, probablement hors service (gris)
+STATION_COUV_MIN = 0.60      # < 60 % de jours renseignés sur la fenêtre → lacunaire

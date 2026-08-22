@@ -24,7 +24,7 @@ from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
 from fetch_sim import fetch_sim_features, organiser_par_maille
 from fetch_temp import temperatures_par_maille
 from fetch_prevision import prevision_par_maille
-from fetch_stations import fetch_stations, cumul_15j, serie_15j
+from fetch_stations import fetch_stations, cumul_15j, serie_pluie, etat_fraicheur
 from compute_index import calcul_indice, niveau, lag_jours, refroidissement, modulation_choc
 from stations import corrige
 from versant import stress_hydrothermique, indice_module
@@ -424,12 +424,16 @@ def traiter_departement(ctx, stations, emettre_stations=True):
             stations_date = f"{fin_st[:4]}-{fin_st[4:6]}-{fin_st[6:]}"
             for s in stations:
                 c15 = cumul_15j(s, stations_date)
+                et = etat_fraicheur(s, stations_date)
                 stations_payload.append({
                     "num": s["num"], "nom": s["nom"],
                     "lat": round(s["lat"], 5), "lon": round(s["lon"], 5),
                     "alti": round(s["alti"]),
                     "cumul_15j": None if c15 is None else round(c15, 1),
-                    "serie": [[d, v] for d, v in serie_15j(s, stations_date)],
+                    "serie": [[d, v] for d, v in serie_pluie(s, stations_date)],
+                    # fraîcheur / santé (levier 1) : à jour / lacunaire / muet
+                    "etat": et["etat"], "retard_j": et["retard_j"],
+                    "jours_ok": et["jours"], "dernier": et["dernier"],
                 })
 
     payload = {

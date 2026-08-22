@@ -17,7 +17,9 @@ from datetime import date, timedelta
 
 import requests
 
-from config import STATION_DEPTS, STATION_CSV_URLS, STATION_FENETRE_JOURS
+from config import (STATION_DEPTS, STATION_CSV_URLS, STATION_FENETRE_JOURS,
+                    STATION_SERIE_JOURS, STATION_FRESH_OK_J, STATION_FRESH_MUET_J,
+                    STATION_COUV_MIN)
 
 
 def fetch_stations(depts=None, fenetre=None, timeout=120):
@@ -84,12 +86,57 @@ def cumul_15j(station, fin_iso, min_jours=10):
     return sum(vals) * 15.0 / len(vals)
 
 
-def serie_15j(station, fin_iso):
-    """Série quotidienne [ (AAAA-MM-JJ, mm|None), ... ] des 15 j (pour la fiche
-    du calque). Ordre chronologique, jour courant en dernier."""
+def serie_pluie(station, fin_iso, jours=None):
+    """Série quotidienne [ (AAAA-MM-JJ, mm|None), ... ] pour la fiche du calque.
+
+    `jours` jours (défaut STATION_SERIE_JOURS) finissant à `fin_iso`, ordre
+    chronologique, jour courant en dernier. Purement pour l'AFFICHAGE : le cumul
+    qui sert à la correction reste calculé sur 15 j (cf. cumul_15j)."""
+    jours = jours or STATION_SERIE_JOURS
     fin = date.fromisoformat(fin_iso)
     out = []
-    for k in range(14, -1, -1):
+    for k in range(jours - 1, -1, -1):
         d = fin - timedelta(days=k)
         out.append((d.isoformat(), station["rr"].get(d.strftime("%Y%m%d"))))
     return out
+
+
+def etat_fraicheur(station, frontier_iso, fenetre=None):
+    """État de fraîcheur / santé d'une station vis-à-vis du FRONT du réseau.
+
+    `frontier_iso` = jour le plus récent publié par l'ENSEMBLE du réseau. On juge
+    chaque poste par rapport aux autres (et non à « aujourd'hui »), ce qui absorbe
+    le délai de publication du paquet climato : il est commun à tous les postes.
+
+    Renvoie un dict :
+      dernier   : AAAA-MM-JJ du dernier jour renseigné (None si aucun) ;
+      retard_j  : nb de jours entre `frontier` et `dernier` (None si aucun) ;
+      jours     : nb de jours renseignés sur la fenêtre ;
+      fenetre   : taille de la fenêtre examinée ;
+      etat      : "ok" (à jour) | "lacunaire" (partiel/un peu en retard) |
+                  "muet" (rien depuis longtemps → probablement hors service).
+
+    NB : "muet" est un signal de FIABILITÉ des données, pas un diagnostic
+    officiel de panne (impossible à établir depuis cette seule source)."""
+    fenetre = fenetre or STATION_SERIE_JOURS
+    fin = date.fromisoformat(frontier_iso)
+    n = 0
+    for k in range(fenetre):
+        j = (fin - timedelta(days=k)).strftime("%Y%m%d")
+        if station["rr"].get(j) is not None:
+            n += 1
+    if not station["rr"]:
+        return {"dernier": None, "retard_j": None, "jours": 0,
+                "fenetre": fenetre, "etat": "muet"}
+    dj = max(station["rr"])                      # AAAAMMJJ le plus récent renseigné
+    dernier = f"{dj[:4]}-{dj[4:6]}-{dj[6:]}"
+    retard = (fin - date.fromisoformat(dernier)).days
+    couv = n / fenetre if fenetre else 0.0
+    if retard > STATION_FRESH_MUET_J:
+        etat = "muet"
+    elif retard > STATION_FRESH_OK_J or couv < STATION_COUV_MIN:
+        etat = "lacunaire"
+    else:
+        etat = "ok"
+    return {"dernier": dernier, "retard_j": retard, "jours": n,
+            "fenetre": fenetre, "etat": etat}

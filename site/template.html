@@ -128,9 +128,31 @@
   .stmk .stdot.lac{background:#f9a825}
   .stmk .stdot.muet{background:#9e9e9e}
   .stmk.muet{opacity:.55;filter:grayscale(.45)}
+  /* Badge « choc thermique + sol humide » (appel à pousse) : flocon en coin
+     haut-gauche + anneau bleu autour du marqueur, pour le repérer d'un coup d'œil. */
+  .stmk.choc{border-color:#1565c0;box-shadow:0 0 0 2px rgba(21,101,192,.35),0 2px 8px rgba(21,101,192,.55)}
+  .stmk .stchoc{position:absolute;top:-7px;left:-7px;width:14px;height:14px;border-radius:50%;
+    background:#1565c0;color:#fff;font-size:9px;line-height:14px;text-align:center;
+    border:1.5px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.5);z-index:3}
   .statctrl .lgd{display:inline-block;width:9px;height:9px;border-radius:50%;
     border:1px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.25);vertical-align:-1px;margin-right:2px}
   .statctrl .lgd.lac{background:#f9a825} .statctrl .lgd.muet{background:#9e9e9e}
+  .statctrl .lgd.choc{background:#1565c0;color:#fff;font-size:8px;line-height:9px;text-align:center;border-radius:50%}
+  /* Graphe de température (bande TN–TX + point TM) dans le panneau station */
+  .tbars{position:relative;display:flex;align-items:stretch;gap:3px;height:120px;
+    padding:4px 0 2px;margin-top:2px}
+  .tbars .tcol{flex:1;position:relative;min-width:0}
+  .tbars .trange{position:absolute;left:50%;transform:translateX(-50%);width:5px;
+    border-radius:3px;background:linear-gradient(#e53935,#1e88e5)}
+  .tbars .tmid{position:absolute;left:50%;transform:translate(-50%,50%);width:9px;height:9px;
+    border-radius:50%;background:#fff;border:2px solid #37474f;z-index:2}
+  .tbars .tref{position:absolute;left:0;right:0;border-top:1px dashed #b0bec5;font-size:8px;
+    color:var(--muted);pointer-events:none}
+  .tbars .tref.gel{border-top:1px solid #1565c0}
+  .tbars .tband{position:absolute;left:0;right:0;background:rgba(46,125,50,.10);pointer-events:none}
+  .tbars .tref span{position:absolute;right:0;top:-9px;background:var(--card,#fff);padding:0 2px}
+  .tdays{display:flex;gap:3px;margin-top:1px}
+  .tdays .td{flex:1;font-size:8px;color:var(--muted);text-align:center;min-width:0}
   /* Barres de pluie (fenêtre d'affichage) dans le panneau latéral (clic station) */
   .stbars{display:flex;align-items:flex-end;gap:3px;height:98px;padding:6px 0 2px}
   .stbars .sbar2{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
@@ -367,6 +389,7 @@ const alphaOf = k => (GRP[k] ? GRP[k].alpha : 1);
 const VERSANT_K = (D.versant_k!=null? D.versant_k : 0.40);
 // Paramètres du choc thermique (miroir de config.py), pour l'affichage du détail.
 const CH = D.choc || {k:0.20,k_chaud:0.10,min:2,opt:6,recent:4,ref:7};
+if(CH.gel==null) CH.gel=1.0;   // seuil gel (garde-fou choc station), miroir GEL_SEUIL_C
 // Refroidissement R (°C) à l'index k d'une série de températures : moyenne de la
 // fenêtre de référence (avant) moins la fenêtre récente. Réplique de compute_index.
 function refroidissementJS(ts, k){
@@ -1430,12 +1453,15 @@ function pluieCells(mm){ return mm==null?0 : mm>=50?4 : mm>=30?3 : mm>=15?2 : mm
 // Marqueur = petite jauge verticale à 4 cellules, remplie du bas selon la pluie.
 // `etat` (fraîcheur, levier 1) ajoute une pastille de coin : rien si à jour,
 // orange si lacunaire, gris + marqueur atténué si muette (probablement HS).
-function jaugeHTML(mm, etat){ const n=pluieCells(mm), col=couleurPluie(mm); let c="";
+function jaugeHTML(mm, etat, choc){ const n=pluieCells(mm), col=couleurPluie(mm); let c="";
   for(let i=0;i<4;i++){ c+=`<i${i<n?` style="background:${col}"`:""}></i>`; }  // .stmk est en column-reverse : i=0 en bas
   const dot = etat==="lacunaire" ? `<span class="stdot lac" title="données lacunaires"></span>`
             : etat==="muet"      ? `<span class="stdot muet" title="station muette (probablement hors service)"></span>` : "";
-  const cls = etat==="muet" ? "stmk muet" : "stmk";
-  return `<div class="${cls}" title="${mm!=null?mm+" mm / 15 j":"—"}">${dot}${c}</div>`; }
+  // Badge « appel à pousse » : choc thermique observé + sol assez humide.
+  const appel = !!(choc && choc.appel);
+  const badge = appel ? `<span class="stchoc" title="choc thermique + sol humide : appel à pousse">❄</span>` : "";
+  const cls = "stmk" + (etat==="muet"?" muet":"") + (appel?" choc":"");
+  return `<div class="${cls}" title="${mm!=null?mm+" mm / 15 j":"—"}">${dot}${badge}${c}</div>`; }
 
 // Traduction de l'état de fraîcheur en libellé + couleur + explication.
 function etatStation(s){ const e=s.etat||"ok";
@@ -1444,6 +1470,54 @@ function etatStation(s){ const e=s.etat||"ok";
   if(e==="lacunaire") return {txt:"Lacunaire", col:"#d98200",
     detail:`données partielles${s.retard_j?", en retard de "+s.retard_j+" j sur le réseau":""} — prise en compte avec prudence.`};
   return {txt:"À jour", col:"#2e7d32", detail:"données à jour avec le réseau."}; }
+
+// Bandeau « verdict » du choc thermique d'une station (miroir de choc_station).
+function chocStationHTML(c){
+  if(!c) return "";
+  const bar=(col,titre,txt)=>`<p class="hint" style="border-left:3px solid ${col};padding-left:8px;margin:8px 0 2px"><b style="color:${col}">${titre}</b> — ${txt}</p>`;
+  const R=c.R, aR=R!=null?Math.abs(R).toFixed(1):"—";
+  if(c.appel) return bar("#1565c0","❄ Choc thermique + sol humide",
+     `refroidissement de ${aR} °C aboutissant dans une plage viable, sur sol assez humide localement. Les deux co-facteurs d'une pousse sont réunis (à combiner avec l'indice de la maille).`);
+  if(c.choc_thermique && !c.humide) return bar("#d98200","Choc thermique, mais sol sec",
+     `refroidissement de ${aR} °C, mais la pluie 15 j locale est sous le seuil : un coup de froid seul ne déclenche pas de pousse.`);
+  if(c.gel) return bar("#5c6bc0","Coup de froid vers le gel",
+     `T° mini récente ${c.tmin_recent!=null?c.tmin_recent.toFixed(1)+" °C":""} sous le seuil de gel : garde-fou actif — ce n'est pas un déclencheur (le gel abîme les jeunes cèpes).`);
+  if(R!=null && R>0) return bar("#8a8a80","Léger refroidissement",
+     `${aR} °C sur ${CH.recent} j récents vs ${CH.ref} j avant — trop faible pour un appel marqué.`);
+  if(R!=null && R<0) return bar("#8a8a80","Réchauffement",
+     `${aR} °C — plutôt défavorable à la pousse.`);
+  return bar("#8a8a80","Température stable","pas de choc thermique notable ces derniers jours.");
+}
+
+// Graphe de température 20 j : bande TN→TX + point TM par jour, plage optimale
+// (vert) et 0 °C (gel) en repères. `serie` = [ [date, tn, tx, tm], ... ].
+function tempChartHTML(serie){
+  const nn=v=>v!=null;
+  const tn=serie.map(r=>r[1]).filter(nn), tx=serie.map(r=>r[2]).filter(nn),
+        tm=serie.map(r=>r[3]).filter(nn);
+  const base=tn.concat(tx).concat(tm);
+  if(!base.length) return "";
+  const lo=Math.min(Math.min(...base)-1, 0), hi=Math.max(Math.max(...base)+1, CH.toh+1);
+  const P=v=>((v-lo)/(hi-lo)*100);
+  let refs=`<div class="tband" style="bottom:${P(CH.tob)}%;height:${Math.max(0,P(CH.toh)-P(CH.tob))}%"></div>`
+          +`<div class="tref" style="bottom:${P(CH.toh)}%"><span>${CH.toh}°</span></div>`;
+  if(0>=lo&&0<=hi) refs+=`<div class="tref gel" style="bottom:${P(0)}%"><span>0°</span></div>`;
+  const cols=serie.map(r=>{
+    const tn2=r[1], tx2=r[2], tm2=r[3];
+    const lowv=(nn(tn2)&&nn(tx2))?Math.min(tn2,tx2):(nn(tn2)?tn2:(nn(tx2)?tx2:tm2));
+    const hiv =(nn(tn2)&&nn(tx2))?Math.max(tn2,tx2):(nn(tx2)?tx2:(nn(tn2)?tn2:tm2));
+    let inner="";
+    if(nn(lowv)&&nn(hiv)){
+      const b=P(lowv), h=Math.max(2,P(hiv)-P(lowv));
+      const tip=`${frDate(r[0])}${nn(tn2)?` · min ${tn2.toFixed(1)}°`:""}${nn(tx2)?` · max ${tx2.toFixed(1)}°`:""}${nn(tm2)?` · moy ${tm2.toFixed(1)}°`:""}`;
+      inner=`<div class="trange" style="bottom:${b}%;height:${h}%" title="${tip}"></div>`;
+      if(nn(tm2)) inner+=`<div class="tmid" style="bottom:${P(tm2)}%" title="${tip}"></div>`;
+    }
+    return `<div class="tcol">${inner}</div>`;
+  }).join("");
+  const days=serie.map(r=>`<div class="td">${r[0].slice(8)}</div>`).join("");
+  return `<div class="tbars">${refs}${cols}</div><div class="tdays">${days}</div>`;
+}
 
 // Détail d'une station dans le PANNEAU LATÉRAL (comme une maille/cueillette).
 function montrerStation(s){
@@ -1463,13 +1537,31 @@ function montrerStation(s){
     return `<div class="sbar2" title="${t}"><span class="mm ${on?'on':'off'}">${mmlab}</span>`
       +`<i style="height:${h}px;background:${couleurPluie(v)}"></i><span class="d">${x[0].slice(8)}</span></div>`;
   }).join("");
+  // Type de poste : station météo (pluie + température, réseau principal) vs
+  // pluviomètre (pluie seule, réseau complémentaire).
+  const c=s.choc||null;
+  const tserie=s.temp_serie||[];
+  const introType = s.a_temp
+    ? "Station météo du réseau principal (pluie + température) : sert à corriger localement la pluie et à détecter le choc thermique."
+    : "Pluviomètre du réseau complémentaire (pluie seule) : sert à corriger localement la pluie de l'indice.";
+  const tempSection = s.a_temp ? `
+    <div style="font-size:12px;font-weight:650;margin:14px 0 2px">Température — ${tserie.length} derniers jours${D.stations_date?" (au "+frDate(D.stations_date)+")":""}</div>
+    ${chocStationHTML(c)}
+    <div class="metrics">
+      ${metric("T° moyenne récente", c&&c.tmean_recent!=null?c.tmean_recent+" °C":"—")}
+      ${metric("T° mini récente", c&&c.tmin_recent!=null?c.tmin_recent+" °C":"—")}
+      ${metric("Refroidissement", c&&c.R!=null?(c.R>0?c.R+" °C ↓":Math.abs(c.R)+" °C ↑"):"—")}
+    </div>
+    ${tempChartHTML(tserie)}
+    <p class="hint">Bande = mini→maxi du jour, point blanc = moyenne. Bande verte = plage optimale (${CH.tob}–${CH.toh} °C), trait bleu = 0 °C (gel). Le « choc » compare la T° moyenne des ${CH.recent} j récents aux ${CH.ref} j précédents ; « ↓ » = refroidissement (favorable).</p>`
+    : `<p class="hint" style="margin-top:12px">Pas de température ici : poste pluviométrique. La température ne provient que du réseau principal.</p>`;
   const el=document.getElementById("detail");
   el.innerHTML=`
     <div style="display:flex;align-items:center;gap:8px">
       <button id="d-back" type="button" style="border:1px solid var(--line);background:#faf9f5;border-radius:7px;padding:2px 8px;font-size:12px;cursor:pointer;color:var(--ink)">‹ retour</button>
-      <h2 style="margin:0">🌧️ ${s.nom||s.num}</h2>
+      <h2 style="margin:0">${s.a_temp?"🌡️":"🌧️"} ${s.nom||s.num}</h2>
     </div>
-    <p class="hint" style="margin-top:8px">Station Météo-France${s.num?" n°"+s.num:""}${s.alti!=null?" · "+Math.round(s.alti)+" m":""}. Pluviomètre du réseau qui sert à corriger localement la pluie de l'indice.</p>
+    <p class="hint" style="margin-top:8px">Station Météo-France${s.num?" n°"+s.num:""}${s.alti!=null?" · "+Math.round(s.alti)+" m":""}. ${introType}</p>
     <div class="metrics">
       ${metric("État station", `<span style="color:${E.col};font-weight:700">${E.txt}</span>`)}
       ${metric("Dernière donnée", s.dernier?frDate(s.dernier):"—")}
@@ -1481,7 +1573,8 @@ function montrerStation(s){
     <p class="hint" style="margin-top:6px">État : <b style="color:${E.col}">${E.txt}</b> — ${E.detail}</p>
     <div style="font-size:12px;font-weight:650;margin:12px 0 2px">Pluie quotidienne — ${serie.length} derniers jours${D.stations_date?" (au "+frDate(D.stations_date)+")":""}</div>
     <div class="stbars">${bars}</div>
-    <p class="hint">Barres = mm par jour (chiffre = quantième du mois). Les stations proches et d'altitude comparable pèsent le plus dans la correction (interpolation relief).</p>`;
+    <p class="hint">Barres = mm par jour (chiffre = quantième du mois). Les stations proches et d'altitude comparable pèsent le plus dans la correction (interpolation relief).</p>
+    ${tempSection}`;
   document.getElementById("d-back").addEventListener("click",fermerDetail);
 }
 
@@ -1493,20 +1586,23 @@ try{
     STA.forEach(s=>{
       const et=s.etat||"ok";
       const etTxt=et==="muet"?" · ⚠ muette (HS probable)":(et==="lacunaire"?" · données lacunaires":"");
+      const chocTxt=(s.choc&&s.choc.appel)?" · ❄ choc thermique + sol humide":"";
       const mk=L.marker([s.lat,s.lon],{icon:L.divIcon({className:"stmk-wrap",
-        html:jaugeHTML(s.cumul_15j, et), iconSize:[25,46], iconAnchor:[12,23]})});
-      mk.bindTooltip(`${s.nom||s.num} · ${s.cumul_15j!=null?s.cumul_15j+" mm/15j":"—"}${etTxt}`);
+        html:jaugeHTML(s.cumul_15j, et, s.choc), iconSize:[25,46], iconAnchor:[12,23]})});
+      mk.bindTooltip(`${s.nom||s.num} · ${s.cumul_15j!=null?s.cumul_15j+" mm/15j":"—"}${etTxt}${chocTxt}`);
       mk.on("click",()=>montrerStation(s));   // détail dans le panneau latéral
       statLayer.addLayer(mk);
     });
     const nLac=STA.filter(s=>s.etat==="lacunaire").length;
     const nMuet=STA.filter(s=>s.etat==="muet").length;
+    const nChoc=STA.filter(s=>s.choc&&s.choc.appel).length;
     const statCtrl=L.control({position:"topright"});
     statCtrl.onAdd=function(){
       const div=L.DomUtil.create("div","statctrl");
       div.innerHTML=`<label style="display:flex;align-items:center;gap:6px;cursor:pointer">
         <input type="checkbox" id="stat-show"> 🌧️ Stations météo <span class="pill">${STA.length}</span></label>
-        <div class="stat-note">Pluviomètres, source de la correction locale. Clic = détail.<br>
+        <div class="stat-note">Pluviomètres + stations, source de la correction locale. Clic = détail.<br>
+        <span class="lgd choc">❄</span>choc thermique + sol humide (appel à pousse)${nChoc?` — <b>${nChoc}</b> station${nChoc>1?"s":""}`:" — aucune aujourd'hui"}<br>
         <span class="lgd lac"></span>lacunaire · <span class="lgd muet"></span>muette (HS probable)${(nLac||nMuet)?` — ${nLac} lacunaire${nLac>1?"s":""}, ${nMuet} muette${nMuet>1?"s":""}`:" — toutes à jour"}</div>`;
       L.DomEvent.disableClickPropagation(div);
       L.DomEvent.disableScrollPropagation(div);

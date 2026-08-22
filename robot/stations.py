@@ -14,8 +14,11 @@ import math
 
 from config import (STATION_IDW_PUISSANCE, STATION_ALT_ECHELLE_M,
                     STATION_RAYON_KM, STATION_DIST_REF_KM, STATION_CONF_REF,
-                    SWI_NUDGE_MM_PAR_UNITE, SWI_NUDGE_MAX)
-from fetch_stations import cumul_15j
+                    SWI_NUDGE_MM_PAR_UNITE, SWI_NUDGE_MAX,
+                    STATION_CHOC_JOURS, STATION_CHOC_SCORE_MIN, GEL_SEUIL_C,
+                    PLUIE_15J_MIN, CHOC_FENETRE_RECENTE)
+from fetch_stations import cumul_15j, serie_temp
+from compute_index import refroidissement, score_choc, score_temperature
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):
@@ -79,3 +82,52 @@ def corrige(swi, p15, lat, lon, alti, stations, fin_iso):
         bump = min(SWI_NUDGE_MAX, (est - p15) / SWI_NUDGE_MM_PAR_UNITE) * alpha
         swi_corr = min(1.0, swi + bump)
     return swi_corr, p_corr, alpha, est
+
+
+def choc_station(station, fin_iso, cumul15=None):
+    """Choc thermique OBSERVÉ à une station + verdict « appel à pousse ».
+
+    Réplique EXACTE du choc de maille (cf. compute_index) mais sur la température
+    RÉELLE de la station (TM). Renvoie None si la station n'a pas de température
+    (réseau complémentaire / pluviomètre). Sinon un dict :
+
+      R              : refroidissement °C (moyenne réf −10..−4 moins récente −3..0),
+                       > 0 = il a refroidi (favorable) ;
+      score          : score_choc(R) ∈ [−1, +1] (rampe signée sur |R|) ;
+      tmean_recent   : T° moyenne des jours récents (fenêtre du choc) ;
+      tmin_recent    : T° mini la plus basse des jours récents (garde-fou gel) ;
+      viable         : le refroidissement aboutit-il dans la plage thermique ? ;
+      gel            : un gel récent est-il détecté (tmin_recent <= GEL_SEUIL_C) ? ;
+      humide         : sol assez humide localement (cumul15 >= PLUIE_15J_MIN) ? ;
+      choc_thermique : refroidissement marqué ET viable ET sans gel (co-facteur T
+                       seul, indépendamment de l'humidité) ;
+      appel          : choc_thermique ET humide → les DEUX co-facteurs réunis,
+                       c'est ce qui allume le badge « appel à pousse » sur la carte.
+
+    Un coup de froid sur sol sec (humide=False) n'est PAS un appel à pousse.
+    """
+    serie = serie_temp(station, fin_iso, STATION_CHOC_JOURS)  # (date,tn,tx,tm)
+    tmeans = [row[3] for row in serie]
+    if not any(v is not None for v in tmeans):
+        return None                      # station sans température
+    R = refroidissement(tmeans)
+    sc = score_choc(R)
+    recents = serie[-CHOC_FENETRE_RECENTE:]
+    tm_rec = [r[3] for r in recents if r[3] is not None]
+    tn_rec = [r[1] for r in recents if r[1] is not None]
+    tmean_recent = sum(tm_rec) / len(tm_rec) if tm_rec else None
+    tmin_recent = min(tn_rec) if tn_rec else None
+    st = score_temperature(tmean_recent)
+    viable = st is not None and st > 0
+    gel = tmin_recent is not None and tmin_recent <= GEL_SEUIL_C
+    humide = cumul15 is not None and cumul15 >= PLUIE_15J_MIN
+    choc_thermique = (sc >= STATION_CHOC_SCORE_MIN) and viable and not gel
+    appel = choc_thermique and humide
+    return {
+        "R": None if R is None else round(R, 1),
+        "score": round(sc, 2),
+        "tmean_recent": None if tmean_recent is None else round(tmean_recent, 1),
+        "tmin_recent": None if tmin_recent is None else round(tmin_recent, 1),
+        "viable": viable, "gel": gel, "humide": humide,
+        "choc_thermique": choc_thermique, "appel": appel,
+    }

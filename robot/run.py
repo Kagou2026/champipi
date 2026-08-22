@@ -20,13 +20,15 @@ from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     CHOC_K, CHOC_K_CHAUD, CHOC_MIN, CHOC_OPT,
                     CHOC_FENETRE_RECENTE, CHOC_FENETRE_REF,
                     TEMP_MIN, TEMP_OPT_BAS, TEMP_OPT_HAUT, TEMP_MAX,
+                    GEL_SEUIL_C,
                     PREV_HORIZON_JOURS, PREV_CAP_SOL_MM)
 from fetch_sim import fetch_sim_features, organiser_par_maille
 from fetch_temp import temperatures_par_maille
 from fetch_prevision import prevision_par_maille
-from fetch_stations import fetch_stations, cumul_15j, serie_pluie, etat_fraicheur
+from fetch_stations import (fetch_stations, cumul_15j, serie_pluie,
+                            etat_fraicheur, serie_temp, a_temperature)
 from compute_index import calcul_indice, niveau, lag_jours, refroidissement, modulation_choc
-from stations import corrige
+from stations import corrige, choc_station
 from versant import stress_hydrothermique, indice_module
 from backfill_hist import historique_a_jour
 
@@ -425,6 +427,21 @@ def traiter_departement(ctx, stations, emettre_stations=True):
             for s in stations:
                 c15 = cumul_15j(s, stations_date)
                 et = etat_fraicheur(s, stations_date)
+                # Température (réseau principal uniquement) : série 20 j + choc
+                # thermique observé. Station sans T (pluviomètre) → a_temp False,
+                # temp_serie vide, choc None (pas de surpoids dans le payload).
+                a_temp = a_temperature(s)
+                if a_temp:
+                    tser = serie_temp(s, stations_date)
+                    temp_serie = [[d,
+                                   None if tn is None else round(tn, 1),
+                                   None if tx is None else round(tx, 1),
+                                   None if tm is None else round(tm, 1)]
+                                  for d, tn, tx, tm in tser]
+                    choc = choc_station(s, stations_date, cumul15=c15)
+                else:
+                    temp_serie = []
+                    choc = None
                 stations_payload.append({
                     "num": s["num"], "nom": s["nom"],
                     "lat": round(s["lat"], 5), "lon": round(s["lon"], 5),
@@ -434,6 +451,8 @@ def traiter_departement(ctx, stations, emettre_stations=True):
                     # fraîcheur / santé (levier 1) : à jour / lacunaire / muet
                     "etat": et["etat"], "retard_j": et["retard_j"],
                     "jours_ok": et["jours"], "dernier": et["dernier"],
+                    # température (réseau principal) + choc thermique observé
+                    "a_temp": a_temp, "temp_serie": temp_serie, "choc": choc,
                 })
 
     payload = {
@@ -446,7 +465,7 @@ def traiter_departement(ctx, stations, emettre_stations=True):
         "choc": {"k": CHOC_K, "k_chaud": CHOC_K_CHAUD, "min": CHOC_MIN,
                  "opt": CHOC_OPT, "recent": CHOC_FENETRE_RECENTE,
                  "ref": CHOC_FENETRE_REF, "tmin": TEMP_MIN, "tob": TEMP_OPT_BAS,
-                 "toh": TEMP_OPT_HAUT, "tmax": TEMP_MAX},
+                 "toh": TEMP_OPT_HAUT, "tmax": TEMP_MAX, "gel": GEL_SEUIL_C},
         "nb_mailles": len({f["properties"]["maille_id"] for f in features}),
         "essence_groupes": essence_groupes,
         "top": top,

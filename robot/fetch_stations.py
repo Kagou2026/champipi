@@ -1,4 +1,4 @@
-"""Récupération des pluviomètres quotidiens Météo-France (réseau climatologique).
+"""Récupération des postes quotidiens Météo-France (réseau climatologique).
 
 Données open-data, SANS clé : « Données climatologiques de base - quotidiennes »
 (data.gouv, org Météo-France). Un fichier CSV.gz par département sur le S3 OVH.
@@ -6,9 +6,17 @@ On lit la pluie quotidienne (RR) des ~15 derniers jours pour la Lozère et ses
 départements limitrophes, afin de CORRIGER localement le cumul 15 j de SAFRAN
 (trop lissé à 8 km pour les orages cévenols). Cf. mémoire champipi-pluie-fiabilite.
 
+On lit AUSSI la température quotidienne (TN mini, TX maxi, TM moyenne) quand elle
+est présente. ATTENTION : seul le réseau PRINCIPAL (QUOT) la renseigne — le réseau
+complémentaire (QUOT_COMP) est fait de pluviomètres, la température y est vide
+partout, MALGRÉ un en-tête de fichier identique « …_RR-T-Vent ». La température
+sert au « choc thermique » observé (refroidissement récent → appel à pousse).
+
 Format CSV : séparateur ';', encodage latin-1, colonnes utiles
-  NUM_POSTE ; NOM_USUEL ; LAT ; LON ; ALTI ; AAAAMMJJ ; RR (pluie mm/j) ; ...
-Un RR vide = jour NON renseigné (à ne pas confondre avec 0 mm).
+  NUM_POSTE ; NOM_USUEL ; LAT ; LON ; ALTI ; AAAAMMJJ ; RR (pluie mm/j) ;
+  TN (mini °C) ; TX (maxi °C) ; TM (moyenne °C) ; TNTXM ((TN+TX)/2) ; ...
+Un champ vide = valeur NON renseignée (pour RR, à ne pas confondre avec 0 mm ;
+pour TM, on retombe sur TNTXM puis sur (TN+TX)/2).
 """
 import csv
 import gzip
@@ -20,6 +28,15 @@ import requests
 from config import (STATION_DEPTS, STATION_CSV_URLS, STATION_FENETRE_JOURS,
                     STATION_SERIE_JOURS, STATION_FRESH_OK_J, STATION_FRESH_MUET_J,
                     STATION_COUV_MIN)
+
+
+def _flt(row, key):
+    """float d'une cellule CSV, ou None si vide/absente/non numérique."""
+    try:
+        v = row.get(key, "")
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def fetch_stations(depts=None, fenetre=None, timeout=120):
@@ -59,11 +76,20 @@ def fetch_stations(depts=None, fenetre=None, timeout=120):
                 if st is None:
                     st = stations[num] = {
                         "num": num, "nom": (row.get("NOM_USUEL") or "").strip(),
-                        "lat": lat, "lon": lon, "alti": alti, "rr": {}}
-                try:
-                    st["rr"][jour] = float(row["RR"])
-                except (TypeError, ValueError, KeyError):
-                    pass  # RR manquant : on n'inscrit pas le jour (≠ 0 mm)
+                        "lat": lat, "lon": lon, "alti": alti, "rr": {}, "t": {}}
+                rr = _flt(row, "RR")
+                if rr is not None:
+                    st["rr"][jour] = rr   # RR manquant : jour non inscrit (≠ 0 mm)
+                # Température : TN/TX bruts, TM = moyenne (TM sinon TNTXM sinon
+                # (TN+TX)/2). Réseau complémentaire → tout None, jour non inscrit.
+                tn = _flt(row, "TN"); tx = _flt(row, "TX")
+                tm = _flt(row, "TM")
+                if tm is None:
+                    tm = _flt(row, "TNTXM")
+                if tm is None and tn is not None and tx is not None:
+                    tm = (tn + tx) / 2.0
+                if tn is not None or tx is not None or tm is not None:
+                    st["t"][jour] = (tn, tx, tm)
     return [s for s in stations.values() if s["rr"]]
 
 
@@ -98,6 +124,28 @@ def serie_pluie(station, fin_iso, jours=None):
     for k in range(jours - 1, -1, -1):
         d = fin - timedelta(days=k)
         out.append((d.isoformat(), station["rr"].get(d.strftime("%Y%m%d"))))
+    return out
+
+
+def a_temperature(station):
+    """True si la station porte au moins un jour de température (réseau principal)."""
+    return bool(station.get("t"))
+
+
+def serie_temp(station, fin_iso, jours=None):
+    """Série de température [ (AAAA-MM-JJ, tn, tx, tm), ... ] pour la fiche.
+
+    `jours` jours (défaut STATION_SERIE_JOURS) finissant à `fin_iso`, ordre
+    chronologique (jour courant en dernier). Chaque valeur manquante = None. Une
+    station sans température renvoie une série de (date, None, None, None)."""
+    jours = jours or STATION_SERIE_JOURS
+    fin = date.fromisoformat(fin_iso)
+    t = station.get("t", {})
+    out = []
+    for k in range(jours - 1, -1, -1):
+        d = fin - timedelta(days=k)
+        tn, tx, tm = t.get(d.strftime("%Y%m%d"), (None, None, None))
+        out.append((d.isoformat(), tn, tx, tm))
     return out
 
 

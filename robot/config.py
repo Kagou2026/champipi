@@ -244,6 +244,23 @@ CHOC_OPT = 6.0             # °C : refroidissement pleinement "déclencheur" -> 
 CHOC_K = 0.20              # gain côté refroidissement (favorable)
 CHOC_K_CHAUD = 0.10        # gain côté réchauffement (défavorable, plus doux)
 
+# --- Choc thermique OBSERVÉ par station (calque « appel à pousse ») ----------
+# Même mesure que le choc de maille (refroidissement R sur la température MOYENNE
+# quotidienne), mais appliquée à la température RÉELLE des stations du réseau
+# principal Météo-France (TM observé, meilleur qu'Open-Meteo à l'endroit exact ;
+# le réseau complémentaire, pluviomètres seuls, n'a pas de température). Sert à
+# SIGNALER sur la carte les stations où un refroidissement net appelle une pousse.
+# Le badge « appel à pousse » ne s'allume que si les DEUX co-facteurs sont réunis :
+#   (1) refroidissement significatif  score_choc(R) >= STATION_CHOC_SCORE_MIN
+#   (2) aboutissant dans une plage thermique VIABLE (cloche > 0, pas vers le gel)
+#   (3) SANS gel récent : T° min récente > GEL_SEUIL_C  (garde-fou : le gel
+#       endommage les jeunes carpophores, ce n'est pas un déclencheur)
+#   (4) sur un sol assez HUMIDE localement : cumul 15 j station >= PLUIE_15J_MIN
+# Un coup de froid seul (sol sec) n'est PAS un appel à pousse.
+STATION_CHOC_JOURS = 14      # fenêtre d'analyse du choc (>= récente+réf+marge)
+STATION_CHOC_SCORE_MIN = 0.5 # score_choc mini pour « choc marqué » (~ R >= 4 °C)
+GEL_SEUIL_C = 1.0            # °C : T° min récente <= ce seuil → garde-fou gel actif
+
 # --- Prévision de sortie (indice projeté dans le futur) ---------------------
 # SAFRAN ne prévoit pas le futur → on utilise la prévision Open-Meteo (~16 j)
 # pour la pluie, la température et l'évapotranspiration (ET0). Le SWI, lui, est

@@ -128,22 +128,36 @@ def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None)
                 cur = max(0.0, min(1.0, cur + (pr - et) / PREV_CAP_SOL_MM))
             swi_by[d] = cur
         cols = {k: [None] * len(dates) for k in ("i", "s", "w", "p", "t")}
+        swf, p15f, tpf = [], [], []
         for d in dates:
             dd = _date.fromisoformat(d)
             p15 = _om_cumul15(d)
             if c_safran is not None:
                 n = (dd - hf).days              # 1 au 1er jour de prévision
-                w = max(0.0, (15 - n) / 14.0)   # 1 → 0 sur 15 jours
-                p15 = max(0.0, p15 - delta_pluie * w)
+                wgt = max(0.0, (15 - n) / 14.0) # 1 → 0 sur 15 jours
+                p15 = max(0.0, p15 - delta_pluie * wgt)
             tp = pv[d].get("temp"); sw = swi_by.get(d)
-            r = calcul_indice(sw, p15, tp, coef)
-            R = refroidissement([pv[x].get("temp") for x in pvdates if x <= d])
             k = pos[d]
-            cols["i"][k] = modulation_choc(r["indice"], R, tp)
             cols["s"][k] = round(stress_hydrothermique(sw, tp), 3) if sw is not None else None
             cols["w"][k] = round(sw, 3) if sw is not None else None
             cols["p"][k] = round(p15, 1)
             cols["t"][k] = round(tp, 1) if tp is not None else None
+            swf.append(sw); p15f.append(p15); tpf.append(tp)
+        # LAG : l'indice futur du jour d reflète les conditions de d − lag. Pour
+        # les ~lag premiers jours, d − lag tombe dans le PASSÉ déjà mesuré
+        # (SAFRAN) → prévision quasi certaine ; au-delà, elle s'appuie sur
+        # Open-Meteo. On préfixe la queue de l'historique long pour disposer de
+        # la profondeur du lag, puis on ne garde que la partie future.
+        lag = lag_jours(cell.get("altitude"))
+        harr = hist_m.get(mid, {}) if hist_m else {}
+        pw = (harr.get("w") or [])[-lag:]
+        pp = (harr.get("p") or [])[-lag:]
+        pt = (harr.get("t") or [])[-lag:]
+        idx = indices_lagues(list(pw) + swf, list(pp) + p15f, list(pt) + tpf,
+                             coef, cell.get("altitude"))
+        fut = idx[len(pw):]
+        for n2, d in enumerate(dates):
+            cols["i"][pos[d]] = fut[n2] if n2 < len(fut) else None
         out[mid] = cols
     return {"dates": dates, "mailles": out}
 
@@ -217,7 +231,23 @@ def traiter_departement(ctx, stations, emettre_stations=True):
     coords = [(c["lat"], c["lon"]) for c in terrain]
     temps = temperatures_par_maille(coords)
 
-    coef_par_maille = {}   # pour corriger ensuite la queue du long historique
+    # Coefs terrain par maille (géologie × forêt × essence), connus d'avance :
+    # nécessaires pour corriger la queue de l'historique long AVANT la boucle.
+    coef_par_maille = {c["maille_id"]: c["coef_terrain"] * c.get("coef_foret", 1.0)
+                       * c.get("coef_essence", 1.0) for c in terrain}
+
+    # Historique long (rejeu SAFRAN 2022→hier, déjà LAGGÉ) chargé AVANT la
+    # boucle : il fournit l'« indice du jour » = son dernier point laggé, pour
+    # que carte du jour, moyenne départementale et top 5 soient cohérents avec
+    # le graphe. Absent si data/historique.json manque (repli sur le calcul
+    # direct + la série 15 j côté page).
+    print("    Historique (rejeu long)…")
+    historique = historique_a_jour(ctx["hist"], ctx["grille"], ctx["terrain"])
+    if historique:
+        print(f"    {historique['n_jours']} jours "
+              f"({historique['debut']} → {historique['fin']})")
+        corrige_historique(historique, terrain, coef_par_maille, stations)
+    hist_lag = historique["mailles"] if historique else {}
 
     print("4/5 Calcul de l'indice par maille...")
     # `mailles` : détail complet par maille (série 15 j, sous-scores...), indexé
@@ -279,8 +309,13 @@ def traiter_departement(ctx, stations, emettre_stations=True):
                                              stations, dernier.get("date")) \
             if dernier else (swi_saf, p_saf, 0.0, None)
         res = calcul_indice(swi_j, p_j, temp, coef)
-        # Indice du jour modulé par le choc thermique (refroidissement récent).
-        indice_jour = modulation_choc(res["indice"], R_at(dernier.get("date")), temp)
+        # Indice du jour = DERNIER point de l'historique long LAGGÉ (la pousse
+        # d'aujourd'hui reflète la météo d'il y a 10/15 j). Repli sur le calcul
+        # direct (modulé par le choc) si l'historique manque pour cette maille.
+        _iar = hist_lag.get(mid, {}).get("i") if hist_lag else None
+        indice_jour = next((v for v in reversed(_iar) if v is not None), None) if _iar else None
+        if indice_jour is None:
+            indice_jour = modulation_choc(res["indice"], R_at(dernier.get("date")), temp)
         niv_jour = niveau(indice_jour)
         if indice_jour is not None:
             indices_jour.append(indice_jour)
@@ -395,17 +430,6 @@ def traiter_departement(ctx, stations, emettre_stations=True):
          "defaut": ESSENCE_GROUPES[k]["defaut"]}
         for k in ESSENCE_ORDRE
     ]
-
-    # Historique long (rejeu dans le temps) : SAFRAN 2022→hier, complété du
-    # plus récent disponible. Absent si data/historique.json manque (le curseur
-    # côté page retombe alors sur la série 15 j).
-    print("    Historique (rejeu long)…")
-    historique = historique_a_jour(ctx["hist"], ctx["grille"], ctx["terrain"])
-    if historique:
-        print(f"    {historique['n_jours']} jours "
-              f"({historique['debut']} → {historique['fin']})")
-        # Correction locale de la queue récente (ancre du raccord + rejeu cohérents).
-        corrige_historique(historique, terrain, coef_par_maille, stations)
 
     print("    Prévision de sortie (Open-Meteo)…")
     hist_fin = historique["fin"] if historique else date_donnees

@@ -56,6 +56,10 @@ jobs:
           # la page. Ils vivent à côté de la page chiffrée dans public/.
           cp site/geom_*.json public/ 2>/dev/null || true
           cp site/hist_*.json public/ 2>/dev/null || true
+          # Historique long des stations (pluie + T° par jour) : permet au calque
+          # « stations météo » de suivre le curseur temporel au lieu de rester
+          # figé sur la photo du jour. Chargé à la demande par la page.
+          cp site/stations_hist.json public/ 2>/dev/null || true
           echo "Contenu de public/ :"; ls -la public/
 
       - name: Préparer l'artefact Pages

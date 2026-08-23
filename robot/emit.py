@@ -212,13 +212,17 @@ def decouper_departement(code, nom, payload, out_dir):
     return dept, registre
 
 
-def ecrire_sorties(departements, template_path, out_dir, params):
+def ecrire_sorties(departements, template_path, out_dir, params,
+                   stations_hist=None):
     """Assemble la page finale multi-département.
 
     - ``departements`` : liste de tuples (code, nom, payload).
     - ``params`` : réglages globaux communs (versant_k, choc, essences, lag).
+    - ``stations_hist`` : historique long des stations (pluie + T° par jour),
+      commun à TOUS les départements (les postes servent aussi les mailles de
+      bord du département voisin) — écrit une seule fois, à part.
     Écrit dans ``out_dir`` : index.html (page légère) + geom_<code>.json +
-    hist_<code>.json pour chaque département.
+    hist_<code>.json pour chaque département + stations_hist.json.
     """
     os.makedirs(out_dir, exist_ok=True)
     registre = []
@@ -230,8 +234,24 @@ def ecrire_sorties(departements, template_path, out_dir, params):
         registre.append(reg)
         genere_le = genere_le or payload.get("genere_le")
 
+    # -- stations_hist.json : historique long des stations, à la demande -----
+    # Le calque « stations » n'était qu'une photo du jour ; ce fichier lui permet
+    # de suivre le curseur temporel. Externe (comme geom/hist) car ~7 Mo : il ne
+    # se charge que si l'utilisateur ouvre le calque sur une date passée.
+    stations_hist_ref = None
+    if stations_hist and stations_hist.get("st"):
+        sb = _compact(stations_hist).encode("utf-8")
+        with open(os.path.join(out_dir, "stations_hist.json"), "wb") as fp:
+            fp.write(sb)
+        stations_hist_ref = {
+            "url": f"stations_hist.json?v={_short_hash(sb)}",
+            "debut": stations_hist.get("debut"), "fin": stations_hist.get("fin"),
+            "n": stations_hist.get("n"), "postes": len(stations_hist["st"]),
+        }
+
     inline = {
         "genere_le": genere_le,
+        "stations_hist": stations_hist_ref,
         "params": params,
         "departements": registre,
         "dept": dept_data,
@@ -252,6 +272,8 @@ def ecrire_sorties(departements, template_path, out_dir, params):
         p = os.path.join(out_dir, name)
         return os.path.getsize(p) / 1e6 if os.path.exists(p) else 0.0
     infos = {"index.html": round(_mb("index.html"), 3)}
+    if stations_hist_ref:
+        infos["stations_hist.json"] = round(_mb("stations_hist.json"), 3)
     for reg in registre:
         infos[f"geom_{reg['code']}.json"] = round(_mb(f"geom_{reg['code']}.json"), 3)
         if reg["hist"]:

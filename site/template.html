@@ -328,6 +328,9 @@ const D = {
   versant_k:       PARAMS.versant_k,
   choc:            PARAMS.choc,
   essence_groupes: PARAMS.essence_groupes || [],
+  // Historique long des stations (fichier externe commun à tous les départements,
+  // chargé à la demande) : {url, debut, fin, n, postes} ou null.
+  stations_hist:   RAW.stations_hist || null,
   mailles:{}, top:[], stations:[], stations_date:null,
   prevision:null, historique:null,
   geojson:{type:"FeatureCollection", features:[]},
@@ -436,6 +439,16 @@ function coolFeat(f){
 // Paramètres du choc thermique (miroir de config.py), pour l'affichage du détail.
 const CH = D.choc || {k:0.20,k_chaud:0.10,min:2,opt:6,recent:4,ref:7};
 if(CH.gel==null) CH.gel=1.0;   // seuil gel (garde-fou choc station), miroir GEL_SEUIL_C
+// Seuils du calque station (miroirs de config.py) — servent au RECALCUL côté page
+// quand on rejoue une date passée : le serveur n'envoie que la photo du jour.
+if(CH.p15min==null) CH.p15min=20;   // PLUIE_15J_MIN : sol « assez humide »
+if(CH.smin==null)   CH.smin=0.5;    // STATION_CHOC_SCORE_MIN : choc « marqué »
+if(CH.stj==null)    CH.stj=14;      // STATION_CHOC_JOURS : fenêtre d'analyse
+if(CH.serj==null)   CH.serj=20;     // STATION_SERIE_JOURS : série affichée
+if(CH.okj==null)    CH.okj=2;       // STATION_FRESH_OK_J
+if(CH.muetj==null)  CH.muetj=7;     // STATION_FRESH_MUET_J
+if(CH.couv==null)   CH.couv=0.6;    // STATION_COUV_MIN
+if(CH.actj==null)   CH.actj=33;     // fenêtre d'ACTIVITÉ du poste (collecte serveur)
 // Refroidissement R (°C) à l'index k d'une série de températures : moyenne de la
 // fenêtre de référence (avant) moins la fenêtre récente. Réplique de compute_index.
 function refroidissementJS(ts, k){
@@ -590,6 +603,12 @@ function finaliserHistorique(histParDept){
 // Sélection courante dans le volet (maille cliquée) : permet au détail de suivre
 // la date du rejeu. Déclarés ici pour être initialisés avant le contrôle rejeu.
 let SELMID = null, SELFACE = null;
+// Station actuellement ouverte dans le volet (numéro de poste) : permet à sa
+// fiche de suivre la date du rejeu, comme le détail d'une maille.
+let SELSTA = null;
+// Redessin du calque stations à la date courante — branché plus bas (le bloc
+// carte est isolé en try/catch), null tant que le calque n'existe pas.
+let majStationsHook = null;
 // Parcelle actuellement SÉLECTIONNÉE (surlignage persistant sur la carte).
 let SELLAYER = null;
 function deselectLayer(){
@@ -764,6 +783,7 @@ function appliquer(){
     if(mm) mm.textContent=(moy!=null?moy:"—")+" / 100";
   }
   majLuneBox();
+  if(majStationsHook){ try{ majStationsHook(); }catch(e){} }
   rafraichirVolet();
 }
 // --- Rejeu paresseux : placeholder au départ, vrai curseur après chargement ---
@@ -935,7 +955,7 @@ function versantHTML(face, base, faceInd){
 // Ouvre le détail d'une maille : structure + graphe d'historique (une seule fois),
 // puis remplissage des valeurs par majDetailDate() selon la date courante.
 function ouvrirDetail(mid, face){
-  SELMID=mid; SELFACE=face||null;
+  SELMID=mid; SELFACE=face||null; SELSTA=null;
   const p=D.mailles[mid];
   // Altitude et lag PROPRES à la parcelle cliquée (repli sur la maille sinon).
   const altAff = (face && face.alt!=null) ? face.alt : p.altitude;
@@ -974,7 +994,7 @@ function ouvrirDetail(mid, face){
 }
 
 function fermerDetail(){
-  SELMID=null; SELFACE=null; deselectLayer();
+  SELMID=null; SELFACE=null; SELSTA=null; deselectLayer();
   if(chart){ chart.destroy(); chart=null; }
   document.getElementById("detail").innerHTML=DETAIL_HOME;
   remplirDefaut();
@@ -1089,7 +1109,36 @@ function remplirTop(){
 }
 
 // Rafraîchit le volet quand la date change (détail si une maille est ouverte, sinon top).
-function rafraichirVolet(){ if(SELMID) majDetailDate(); else remplirTop(); }
+function rafraichirVolet(){
+  if(SELSTA){
+    const c=vuesCourantes();
+    let v=null;
+    for(let i=0;i<c.liste.length;i++) if(c.liste[i].num===SELSTA){ v=c.liste[i]; break; }
+    if(v) montrerStation(v); else stationAbsente(c);
+    return;
+  }
+  if(SELMID) majDetailDate(); else remplirTop();
+}
+// La station ouverte n'a rien à montrer à la date choisie : on garde la fiche
+// ouverte (SELSTA inchangé) avec un mot d'explication — revenir sur une date
+// couverte la ré-affiche telle quelle.
+function stationAbsente(c){
+  const num=SELSTA;
+  const raison = c.mode==="futur" ? "Pas d'observation de station dans le futur : ce sont des mesures, pas une prévision."
+    : c.mode==="load" ? "Chargement de l'historique des stations…"
+    : c.mode==="idle" ? "Historique des stations pas encore chargé."
+    : c.mode==="ko"   ? "Historique des stations indisponible."
+    : c.mode==="hors" ? "Cette date est antérieure à l'archive des stations."
+    : "Ce poste ne relevait pas à cette date (ouvert plus tard, ou fermé).";
+  const el=document.getElementById("detail");
+  el.innerHTML=`
+    <div style="display:flex;align-items:center;gap:8px">
+      <button id="d-back" type="button" style="border:1px solid var(--line);background:#faf9f5;border-radius:7px;padding:2px 8px;font-size:12px;cursor:pointer;color:var(--ink)">‹ retour</button>
+      <h2 style="margin:0">🌧️ Station ${num}</h2>
+    </div>
+    <p class="hint" style="margin-top:10px">${c.date?frDate(c.date)+" — ":""}${raison}</p>`;
+  const b=document.getElementById("d-back"); if(b) b.addEventListener("click",fermerDetail);
+}
 
 function addDays(ds,n){ const d=new Date(ds+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
 // Synthèse de prévision : prochaine fenêtre favorable + pousse attendue (+lag) +
@@ -1283,7 +1332,7 @@ function formulaireObs(pos, o, opts){
 
 // Détail d'une cueillette + données de la zone (maille) à sa date
 function montrerObs(o){
-  SELMID=null; SELFACE=null; if(chart){chart.destroy(); chart=null;}
+  SELMID=null; SELFACE=null; SELSTA=null; if(chart){chart.destroy(); chart=null;}
   const mid=nearestMaille(o.lat,o.lon), p=D.mailles[mid]||{};
   const k=hIndex(o.date);
   const geo={acide:"sol acide",neutre:"sol neutre",calcaire:"sol calcaire",inconnu:"sol ?"}[p.geologie_classe]||p.geologie_classe||"—";
@@ -1630,7 +1679,8 @@ function tempChartHTML(serie){
 
 // Détail d'une station dans le PANNEAU LATÉRAL (comme une maille/cueillette).
 function montrerStation(s){
-  SELMID=null; SELFACE=null; if(chart){ chart.destroy(); chart=null; }
+  SELMID=null; SELFACE=null; SELSTA=s.num||null; if(chart){ chart.destroy(); chart=null; }
+  const dateSta = s.date || D.stations_date;   // date des observations affichées
   const serie=s.serie||[];
   const E=etatStation(s);
   const vals=serie.map(x=>x[1]).filter(v=>v!=null);
@@ -1654,7 +1704,7 @@ function montrerStation(s){
     ? "Station météo du réseau principal (pluie + température) : sert à corriger localement la pluie et à détecter le choc thermique."
     : "Pluviomètre du réseau complémentaire (pluie seule) : sert à corriger localement la pluie de l'indice.";
   const tempSection = s.a_temp ? `
-    <div style="font-size:12px;font-weight:650;margin:14px 0 2px">Température — ${tserie.length} derniers jours${D.stations_date?" (au "+frDate(D.stations_date)+")":""}</div>
+    <div style="font-size:12px;font-weight:650;margin:14px 0 2px">Température — ${tserie.length} derniers jours${dateSta?" (au "+frDate(dateSta)+")":""}</div>
     ${chocStationHTML(c)}
     <div class="metrics">
       ${metric("T° moyenne récente", c&&c.tmean_recent!=null?c.tmean_recent+" °C":"—")}
@@ -1680,11 +1730,197 @@ function montrerStation(s){
       ${metric("Altitude", s.alti!=null?Math.round(s.alti)+" m":"—")}
     </div>
     <p class="hint" style="margin-top:6px">État : <b style="color:${E.col}">${E.txt}</b> — ${E.detail}</p>
-    <div style="font-size:12px;font-weight:650;margin:12px 0 2px">Pluie quotidienne — ${serie.length} derniers jours${D.stations_date?" (au "+frDate(D.stations_date)+")":""}</div>
+    <div style="font-size:12px;font-weight:650;margin:12px 0 2px">Pluie quotidienne — ${serie.length} derniers jours${dateSta?" (au "+frDate(dateSta)+")":""}</div>
     <div class="stbars">${bars}</div>
     <p class="hint">Barres = mm par jour (chiffre = quantième du mois). Les stations proches et d'altitude comparable pèsent le plus dans la correction (interpolation relief).</p>
     ${tempSection}`;
   document.getElementById("d-back").addEventListener("click",fermerDetail);
+}
+
+// ============================================================================
+// Historique long des stations (stations_hist.json, chargé À LA DEMANDE).
+// Sans lui, le calque ne saurait montrer qu'une PHOTO du jour : en remontant le
+// curseur d'un an, jauges, thermomètres et badges ❄ resteraient figés sur
+// avant-hier. Avec lui, on RECALCULE côté page, à la date affichée, exactement
+// ce que le robot calcule côté serveur pour aujourd'hui (cumul 15 j, série 20 j,
+// choc thermique, fraîcheur du poste) — mêmes formules, mêmes seuils.
+// ============================================================================
+const SH_REF = D.stations_hist || null;
+let SH = null, SH_STATE = "idle";     // idle | load | ok | ko
+const shPret = ()=> SH_STATE==="ok" && !!SH;
+// "12,,0,3" (dixièmes de mm ou °C, vide = jour non renseigné) -> Float32Array
+// (NaN = manquant, testé par v===v). null si la série est absente.
+function shDecoder(str, n){
+  if(!str) return null;
+  const a=new Float32Array(n); a.fill(NaN);
+  const t=str.split(",");
+  const m=Math.min(n, t.length);
+  for(let i=0;i<m;i++){ const v=t[i]; if(v!=="") a[i]=(+v)/10; }
+  return a;
+}
+function shPreparer(raw){
+  const n=raw.n||0, st={};
+  for(const num in raw.st){
+    const e=raw.st[num];
+    st[num]={num:num, nom:e.n, lat:e.y, lon:e.x, alti:e.a,
+             rr:shDecoder(e.rr,n), tn:shDecoder(e.tn,n),
+             tx:shDecoder(e.tx,n), tm:shDecoder(e.tm,n)};
+  }
+  return {debut:raw.debut, fin:raw.fin, n:n,
+          t0:Date.parse(raw.debut+"T00:00:00Z"), st:st};
+}
+async function chargerStationsHist(){
+  if(SH_STATE==="ok") return true;
+  if(SH_STATE==="load" || !SH_REF || !SH_REF.url) return false;
+  SH_STATE="load"; if(majStationsHook){ try{ majStationsHook(); }catch(e){} }
+  try{
+    const r=await fetch(SH_REF.url);
+    if(!r.ok) throw new Error("http "+r.status);
+    SH=shPreparer(await r.json()); SH_STATE="ok";
+  }catch(e){ SH=null; SH_STATE="ko"; }
+  if(majStationsHook){ try{ majStationsHook(); }catch(e){} }
+  if(SELSTA) rafraichirVolet();
+  return SH_STATE==="ok";
+}
+// Index du jour `dateISO` dans les séries (ou -1 hors plage).
+function shIndex(dateISO){
+  if(!SH || !dateISO) return -1;
+  const k=Math.round((Date.parse(dateISO+"T00:00:00Z")-SH.t0)/86400000);
+  return (k>=0 && k<SH.n) ? k : -1;
+}
+const shArrondi = (v)=> v==null ? null : Math.round(v*10)/10;
+// Cumul 15 j à l'index k (réplique de fetch_stations.cumul_15j : >= 10 jours
+// renseignés, extrapolé à la fenêtre pleine sinon null).
+function shCumul15(a, k){
+  if(!a) return null;
+  let s=0, n=0;
+  for(let j=Math.max(0,k-14); j<=k; j++){ const v=a[j]; if(v===v){ s+=v; n++; } }
+  return n<10 ? null : s*15/n;
+}
+// Série quotidienne [ [date, valeur|null], ... ] finissant à k (réplique de serie_pluie).
+function shSeriePluie(a, k, jours){
+  const out=[];
+  for(let j=k-jours+1; j<=k; j++){
+    const v=(j>=0 && a && a[j]===a[j]) ? shArrondi(a[j]) : null;
+    out.push([shDate(j), v]);
+  }
+  return out;
+}
+function shSerieTemp(s, k, jours){
+  const out=[];
+  for(let j=k-jours+1; j<=k; j++){
+    const g=(arr)=> (j>=0 && arr && arr[j]===arr[j]) ? shArrondi(arr[j]) : null;
+    out.push([shDate(j), g(s.tn), g(s.tx), g(s.tm)]);
+  }
+  return out;
+}
+function shDate(k){
+  if(!SH || k<0) return "";
+  return new Date(SH.t0+k*86400000).toISOString().slice(0,10);
+}
+// Refroidissement R à l'index k, réplique EXACTE de compute_index.refroidissement
+// tel qu'appelé par stations.choc_station : on prend la fenêtre de CH.stj jours,
+// on COMPACTE (les jours manquants sont retirés, pas comptés comme des trous),
+// puis on compare les CH.recent dernières valeurs aux CH.ref précédentes.
+function shRefroidissement(tm, k){
+  if(!tm) return null;
+  const vals=[];
+  for(let j=Math.max(0,k-CH.stj+1); j<=k; j++){ const v=tm[j]; if(v===v) vals.push(v); }
+  if(vals.length < CH.recent+2) return null;
+  const rec=vals.slice(-CH.recent);
+  const ref=vals.slice(Math.max(0,vals.length-CH.recent-CH.ref), vals.length-CH.recent);
+  if(rec.length<2 || ref.length<3) return null;
+  const moy=(a)=>a.reduce((x,y)=>x+y,0)/a.length;
+  return moy(ref)-moy(rec);
+}
+// Choc thermique observé à l'index k (réplique de stations.choc_station).
+function shChoc(s, k, cumul15){
+  if(!s.tm) return null;
+  let vu=false;
+  for(let j=Math.max(0,k-CH.stj+1); j<=k; j++){ if(s.tm[j]===s.tm[j]){ vu=true; break; } }
+  if(!vu) return null;                       // pas de température sur la fenêtre
+  const R=shRefroidissement(s.tm, k), sc=scoreChocJS(R);
+  let som=0, nb=0, tmin=null;
+  for(let j=Math.max(0,k-CH.recent+1); j<=k; j++){
+    const v=s.tm?s.tm[j]:NaN;  if(v===v){ som+=v; nb++; }
+    const w=s.tn?s.tn[j]:NaN;  if(w===w && (tmin===null || w<tmin)) tmin=w;
+  }
+  const tmean = nb? som/nb : null;
+  const viable = scoreTempJS(tmean)>0;
+  const gel = tmin!==null && tmin<=CH.gel;
+  const humide = cumul15!=null && cumul15>=CH.p15min;
+  const choc_thermique = (sc>=CH.smin) && viable && !gel;
+  return {R:(R==null?null:Math.round(R*10)/10), score:Math.round(sc*100)/100,
+          tmean_recent:shArrondi(tmean), tmin_recent:shArrondi(tmin),
+          viable:viable, gel:gel, humide:humide,
+          choc_thermique:choc_thermique, appel:choc_thermique&&humide};
+}
+// Fraîcheur du poste À CETTE DATE (réplique de etat_fraicheur, le « front du
+// réseau » étant ici la date affichée). jours=0 -> poste inactif ce jour-là :
+// il n'existait pas encore, ou il a fermé — on ne l'affiche pas du tout.
+function shEtat(s, k){
+  let n=0, dernier=-1, actif=false;
+  for(let j=Math.max(0,k-CH.serj+1); j<=k; j++) if(s.rr && s.rr[j]===s.rr[j]) n++;
+  for(let j=k; j>=0; j--) if(s.rr && s.rr[j]===s.rr[j]){ dernier=j; break; }
+  // Poste ACTIF ? Même règle que le serveur, qui collecte une fenêtre de CH.actj
+  // jours : un poste sans une seule pluie sur cette fenêtre n'existe pas encore
+  // (ou a fermé) et n'est pas affiché ; entre les deux il est « muet ».
+  actif = dernier>=0 && (k-dernier) < CH.actj;
+  if(!actif) return {etat:"muet", retard_j:null, jours:0, dernier:null, actif:false};
+  const retard=k-dernier, couv=n/CH.serj;
+  const etat = retard>CH.muetj ? "muet" : ((retard>CH.okj || couv<CH.couv) ? "lacunaire" : "ok");
+  return {etat:etat, retard_j:retard, jours:n, dernier:shDate(dernier), actif:true};
+}
+// Vue d'une station à l'index k, à la FORME EXACTE du payload serveur : la fiche
+// et le marqueur ne font aucune différence entre « aujourd'hui » et « rejeu ».
+function shVue(s, k){
+  const et=shEtat(s,k);
+  if(!et.actif) return null;                 // poste inactif à cette date
+  const c15=shCumul15(s.rr,k);
+  // « station météo » ou « pluviomètre » À CETTE DATE : miroir de
+  // fetch_stations.a_temperature, jugé sur la même fenêtre de collecte.
+  let aT=false;
+  if(s.tm) for(let j=Math.max(0,k-CH.actj+1); j<=k; j++) if(s.tm[j]===s.tm[j]){ aT=true; break; }
+  const choc=aT? shChoc(s,k,c15) : null;
+  return {num:s.num, nom:s.nom, lat:s.lat, lon:s.lon, alti:s.alti,
+          cumul_15j: c15==null?null:Math.round(c15*10)/10,
+          serie: shSeriePluie(s.rr, k, CH.serj),
+          etat:et.etat, retard_j:et.retard_j, jours_ok:et.jours, dernier:et.dernier,
+          a_temp:aT, temp_serie: aT? shSerieTemp(s,k,CH.serj) : [],
+          choc:choc, date:shDate(k)};
+}
+// État courant du calque selon la date affichée :
+//   live   : photo serveur du jour (identique à avant) ;
+//   hist   : recalcul à la date du rejeu ;
+//   retard : date postérieure aux dernières observations publiées (le paquet
+//            climato a 1-3 j de retard) -> on montre le dernier jour connu ;
+//   futur  : prévision — il n'y a pas d'observation dans le futur ;
+//   load/ko/idle : historique stations en cours / indisponible / pas encore demandé.
+function vuesCourantes(){
+  const snap = D.stations || [];
+  if(HCUR<0 || !H) return {liste:snap, date:D.stations_date, mode:"live"};
+  const d=HDATES[HCUR];
+  // Une station MESURE : au-delà d'aujourd'hui il n'y a rien à montrer. On se
+  // fie à la date réelle, pas à estFutur() : la timeline bascule en « prévision »
+  // dès le lendemain de SAFRAN, alors que les postes ont bien relevé ces jours-là.
+  if(d>aujourdhui()) return {liste:[], date:d, mode:"futur"};
+  if(!SH_REF) return {liste:snap, date:D.stations_date, mode:"live"};
+  if(!shPret()) return {liste:[], date:d, mode:(SH_STATE==="load"?"load":(SH_STATE==="ko"?"ko":"idle"))};
+  let k=shIndex(d), mode="hist";
+  if(k<0){
+    if(d<SH.debut) return {liste:[], date:d, mode:"hors"}; // avant l'archive
+    k=SH.n-1; mode="retard";                     // 1-3 j de délai de publication
+  }
+  const out=[];
+  for(const num in SH.st){ const v=shVue(SH.st[num], k); if(v) out.push(v); }
+  return {liste:out, date:shDate(k), mode:mode};
+}
+// Vue de la station ouverte dans le volet, à la date courante (null si le poste
+// n'a rien ce jour-là).
+function vueStationCourante(num){
+  const c=vuesCourantes();
+  for(let i=0;i<c.liste.length;i++) if(c.liste[i].num===num) return c.liste[i];
+  return null;
 }
 
 // ---- Construction du calque + contrôle (isolé, ne doit pas casser le mobile).
@@ -1692,41 +1928,100 @@ try{
   const STA = D.stations || [];
   if(STA.length){
     const statLayer=L.layerGroup();   // OFF au départ (ajouté au clic "voir")
-    STA.forEach(s=>{
-      const et=s.etat||"ok";
-      const etTxt=et==="muet"?" · ⚠ muette (HS probable)":(et==="lacunaire"?" · données lacunaires":"");
-      const chocTxt=(s.choc&&s.choc.appel)?" · ❄ choc thermique + sol humide":"";
+    const MK={};                      // num -> marqueur (réutilisé d'une date à l'autre)
+    let statOn=false;
+    const htmlStation=(v)=>jaugeHTML(v.cumul_15j, v.etat||"ok", v.choc);
+    const iconStation=(v,html)=>L.divIcon({className:"stmk-wrap", html:html,
       // Icône plus large si thermomètre présent (jauge ~25 + thermo ~10) ; l'ancre
       // reste sur la jauge (le point station), le thermomètre déborde à droite.
-      const hasT=!!s.choc;
-      const mk=L.marker([s.lat,s.lon],{icon:L.divIcon({className:"stmk-wrap",
-        html:jaugeHTML(s.cumul_15j, et, s.choc),
-        iconSize:[hasT?35:25,46], iconAnchor:[12,23]})});
-      const chocLvl=(s.choc&&s.choc.score!=null)?` · choc ${s.choc.score>0?"↓":s.choc.score<0?"↑":"="}${Math.abs(s.choc.score).toFixed(2)}`:"";
-      mk.bindTooltip(`${s.nom||s.num} · ${s.cumul_15j!=null?s.cumul_15j+" mm/15j":"—"}${etTxt}${chocTxt||chocLvl}`);
-      mk.on("click",()=>montrerStation(s));   // détail dans le panneau latéral
-      statLayer.addLayer(mk);
-    });
-    const nLac=STA.filter(s=>s.etat==="lacunaire").length;
-    const nMuet=STA.filter(s=>s.etat==="muet").length;
-    const nChoc=STA.filter(s=>s.choc&&s.choc.appel).length;
+      iconSize:[v.choc?35:25,46], iconAnchor:[12,23]});
+    function tipStation(v){
+      const et=v.etat||"ok";
+      const etTxt=et==="muet"?" · ⚠ muette (HS probable)":(et==="lacunaire"?" · données lacunaires":"");
+      const chocTxt=(v.choc&&v.choc.appel)?" · ❄ choc thermique + sol humide":"";
+      const chocLvl=(v.choc&&v.choc.score!=null)?` · choc ${v.choc.score>0?"↓":v.choc.score<0?"↑":"="}${Math.abs(v.choc.score).toFixed(2)}`:"";
+      return `${v.nom||v.num} · ${v.cumul_15j!=null?v.cumul_15j+" mm/15j":"—"}${etTxt}${chocTxt||chocLvl}`;
+    }
+    // Redessine le calque à la date courante : les marqueurs sont RÉUTILISÉS
+    // (setIcon) plutôt que recréés, pour que l'animation du rejeu reste fluide.
+    function dessinerStations(){
+      const cur=vuesCourantes();
+      const vus={};
+      cur.liste.forEach(v=>{
+        vus[v.num]=1;
+        let mk=MK[v.num];
+        const html=htmlStation(v), tip=tipStation(v);
+        if(!mk){
+          mk=MK[v.num]=L.marker([v.lat,v.lon],{icon:iconStation(v,html)});
+          mk.bindTooltip(tip);
+          mk.on("click",()=>montrerStation(mk.__v));   // détail dans le panneau latéral
+          mk.__html=html; mk.__tip=tip;
+        }else{
+          // rendu incrémental : on ne touche au DOM que si le marqueur CHANGE
+          // (la lecture du rejeu enchaîne les dates, inutile de tout refaire).
+          if(mk.__html!==html){ mk.setIcon(iconStation(v,html)); mk.__html=html; }
+          if(mk.__tip!==tip){ try{ mk.setTooltipContent(tip); }catch(e){} mk.__tip=tip; }
+        }
+        mk.__v=v;
+        if(!statLayer.hasLayer(mk)) statLayer.addLayer(mk);
+      });
+      for(const num in MK){ if(!vus[num] && statLayer.hasLayer(MK[num])) statLayer.removeLayer(MK[num]); }
+      majNoteStations(cur);
+      return cur;
+    }
+    // Bandeau explicatif du contrôle : compte des badges ❄ et état du calque À LA
+    // DATE AFFICHÉE (et non « aujourd'hui » comme avant, ce qui était trompeur).
+    function majNoteStations(cur){
+      const el=document.getElementById("stat-note"); if(!el) return;
+      const L2=cur.liste;
+      const nLac=L2.filter(v=>v.etat==="lacunaire").length;
+      const nMuet=L2.filter(v=>v.etat==="muet").length;
+      const nChoc=L2.filter(v=>v.choc&&v.choc.appel).length;
+      const quand = cur.mode==="live" ? (cur.date?"au "+frDate(cur.date):"aujourd'hui")
+                  : (cur.date? "au "+frDate(cur.date) : "");
+      let bandeau="";
+      if(cur.mode==="futur")      bandeau=`<b>Prévision</b> : pas d'observation de station dans le futur — le calque reprend dès qu'on revient à une date passée.`;
+      else if(cur.mode==="load")  bandeau=`Chargement de l'historique des stations…`;
+      else if(cur.mode==="idle")  bandeau=`<a href="#" id="stat-load">Charger l'historique des stations</a> pour suivre le curseur (${SH_REF&&SH_REF.postes?SH_REF.postes+" postes, ":""}~7 Mo).`;
+      else if(cur.mode==="ko")    bandeau=`Historique des stations indisponible — le calque reste sur la photo du jour.`;
+      else if(cur.mode==="hors")  bandeau=`Pas d'archive station avant le ${SH?frDate(SH.debut):"début"} — rien à montrer à cette date.`;
+      else if(cur.mode==="retard")bandeau=`Dernières observations publiées : <b>${frDate(cur.date)}</b> (le paquet climato a 1 à 3 jours de retard).`;
+      const compte = (cur.mode==="futur"||cur.mode==="load"||cur.mode==="idle"||cur.mode==="ko"||cur.mode==="hors")
+        ? "" : `<br><span class="lgd choc">❄</span>choc thermique + sol humide (appel à pousse)${nChoc?` — <b>${nChoc}</b> station${nChoc>1?"s":""} ${quand}`:" — aucune "+quand}<br>
+        <span class="lgd lac"></span>lacunaire · <span class="lgd muet"></span>muette (HS probable)${(nLac||nMuet)?` — ${nLac} lacunaire${nLac>1?"s":""}, ${nMuet} muette${nMuet>1?"s":""}`:" — toutes à jour"}`;
+      el.innerHTML=`Pluviomètres + stations, source de la correction locale. Clic = détail.<br>
+        🌡 thermomètre = niveau de choc thermique (<span style="color:#0d47a1;font-weight:700">bleu</span> refroidissement, <span style="color:#b2182b;font-weight:700">rouge</span> réchauffement ; stations principales seulement).${bandeau?"<br>"+bandeau:""}${compte}`;
+      const a=document.getElementById("stat-load");
+      if(a) a.addEventListener("click",e=>{ e.preventDefault(); chargerStationsHist(); });
+      const p=document.getElementById("stat-pill");
+      if(p) p.textContent = L2.length || STA.length;
+    }
+    // Point d'entrée appelé par appliquer() à chaque changement de date.
+    majStationsHook=function(){
+      if(!statOn) return;
+      const cur=dessinerStations();
+      // date passée + historique pas encore là : on le récupère (le calque est
+      // ouvert ET l'utilisateur a bougé le curseur : l'intention est explicite).
+      if(cur.mode==="idle") chargerStationsHist();
+    };
     const statCtrl=L.control({position:"topright"});
     statCtrl.onAdd=function(){
       const div=L.DomUtil.create("div","statctrl");
       div.innerHTML=`<label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-        <input type="checkbox" id="stat-show"> 🌧️ Stations météo <span class="pill">${STA.length}</span></label>
-        <div class="stat-note">Pluviomètres + stations, source de la correction locale. Clic = détail.<br>
-        🌡 thermomètre = niveau de choc thermique (<span style="color:#0d47a1;font-weight:700">bleu</span> refroidissement, <span style="color:#b2182b;font-weight:700">rouge</span> réchauffement ; stations principales seulement).<br>
-        <span class="lgd choc">❄</span>choc thermique + sol humide (appel à pousse)${nChoc?` — <b>${nChoc}</b> station${nChoc>1?"s":""}`:" — aucune aujourd'hui"}<br>
-        <span class="lgd lac"></span>lacunaire · <span class="lgd muet"></span>muette (HS probable)${(nLac||nMuet)?` — ${nLac} lacunaire${nLac>1?"s":""}, ${nMuet} muette${nMuet>1?"s":""}`:" — toutes à jour"}</div>`;
+        <input type="checkbox" id="stat-show"> 🌧️ Stations météo <span class="pill" id="stat-pill">${STA.length}</span></label>
+        <div class="stat-note" id="stat-note"></div>`;
       L.DomEvent.disableClickPropagation(div);
       L.DomEvent.disableScrollPropagation(div);
       return div;
     };
     statCtrl.addTo(map);
+    majNoteStations({liste:STA, date:D.stations_date, mode:"live"});
     const sc=document.getElementById("stat-show");
     if(sc) sc.addEventListener("change",e=>{
-      if(e.target.checked) statLayer.addTo(map); else map.removeLayer(statLayer);
+      statOn=e.target.checked;
+      if(statOn){ const cur=dessinerStations(); statLayer.addTo(map);
+                  if(cur.mode==="idle") chargerStationsHist(); }
+      else map.removeLayer(statLayer);
     });
   }
 }catch(_){}

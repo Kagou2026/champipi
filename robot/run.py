@@ -22,7 +22,11 @@ from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     CHOC_K, CHOC_K_CHAUD, CHOC_MIN, CHOC_OPT,
                     CHOC_FENETRE_RECENTE, CHOC_FENETRE_REF,
                     TEMP_MIN, TEMP_OPT_BAS, TEMP_OPT_HAUT, TEMP_MAX,
-                    GEL_SEUIL_C,
+                    GEL_SEUIL_C, PLUIE_15J_MIN,
+                    STATION_CHOC_SCORE_MIN, STATION_CHOC_JOURS,
+                    STATION_SERIE_JOURS, STATION_FENETRE_JOURS,
+                    STATION_FRESH_OK_J,
+                    STATION_FRESH_MUET_J, STATION_COUV_MIN,
                     PREV_HORIZON_JOURS, PREV_CAP_SOL_MM)
 from fetch_sim import fetch_sim_features, organiser_par_maille
 from fetch_temp import temperatures_par_maille
@@ -553,7 +557,17 @@ def traiter_departement(ctx, stations, emettre_stations=True):
         "choc": {"k": CHOC_K, "k_chaud": CHOC_K_CHAUD, "min": CHOC_MIN,
                  "opt": CHOC_OPT, "recent": CHOC_FENETRE_RECENTE,
                  "ref": CHOC_FENETRE_REF, "tmin": TEMP_MIN, "tob": TEMP_OPT_BAS,
-                 "toh": TEMP_OPT_HAUT, "tmax": TEMP_MAX, "gel": GEL_SEUIL_C},
+                 "toh": TEMP_OPT_HAUT, "tmax": TEMP_MAX, "gel": GEL_SEUIL_C,
+                 # seuils du calque station : la page les rejoue à l'identique
+                 # quand on remonte le curseur (recalcul client-side).
+                 "p15min": PLUIE_15J_MIN, "smin": STATION_CHOC_SCORE_MIN,
+                 "stj": STATION_CHOC_JOURS, "serj": STATION_SERIE_JOURS,
+                 "okj": STATION_FRESH_OK_J, "muetj": STATION_FRESH_MUET_J,
+                 "couv": STATION_COUV_MIN,
+                 # fenêtre de collecte du serveur (STATION_FENETRE_JOURS + 3 j de
+                 # marge de publication) : sert au client à décider si un poste
+                 # était ACTIF à la date rejouée, avec la même règle qu'ici.
+                 "actj": STATION_FENETRE_JOURS + 3},
         "nb_mailles": len({f["properties"]["maille_id"] for f in features}),
         "essence_groupes": essence_groupes,
         "top": top,
@@ -578,6 +592,7 @@ def main():
     ses fichiers geom_<code>/hist_<code> externes ; la page n'embarque que le
     signal du jour (cf. emit.py). Un département sans données est ignoré."""
     from emit import ecrire_sorties
+    from backfill_stations import stations_hist_a_jour
     import os as _os
     print("Pluviomètres (correction locale, multi-départements)...")
     try:
@@ -586,6 +601,17 @@ def main():
     except Exception as e:
         stations = []
         print(f"    ⚠ stations indisponibles ({type(e).__name__}: {e})")
+
+    # Historique long des stations (fichier committé + complément du jour) :
+    # permet au calque « stations » de suivre le curseur temporel au lieu de
+    # rester figé sur la photo du jour. Absent = calque limité au temps réel.
+    try:
+        stations_hist = stations_hist_a_jour(stations)
+    except Exception as e:
+        stations_hist = None
+        print(f"    ⚠ historique stations indisponible ({type(e).__name__}: {e})")
+    if stations_hist is None:
+        print("    (pas d'historique stations — calque limité au jour courant)")
 
     resultats = []
     params = None
@@ -611,7 +637,8 @@ def main():
     if not resultats:
         raise SystemExit("Aucun département généré.")
     out_dir = _os.path.dirname(SITE_OUTPUT) or "."
-    infos = ecrire_sorties(resultats, SITE_TEMPLATE, out_dir, params)
+    infos = ecrire_sorties(resultats, SITE_TEMPLATE, out_dir, params,
+                           stations_hist=stations_hist)
     print("\nSorties :")
     for _name, _mb in infos.items():
         print(f"    {_name:22} {_mb:.3f} Mo")

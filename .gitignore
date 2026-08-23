@@ -15,6 +15,8 @@ site/index.html
 # Fichiers statiques régénérés par le robot (b) : géométrie + historique.
 site/geom_*.json
 site/hist_*.json
+# Copie SERVIE de l'historique des stations (la base vit dans data/, committée).
+site/stations_hist.json
 
 # Sortie de chiffrement StatiCrypt + config auto-générée
 public/

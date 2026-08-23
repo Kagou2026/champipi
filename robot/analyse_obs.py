@@ -15,11 +15,40 @@ Par défaut, cherche champipi_observations.json dans le dossier courant.
 """
 import json
 import math
+import os
 import sys
 from datetime import date
 
+sys.path.insert(0, "robot")   # import direct quand lancé depuis la racine
+
 HIST = "data/historique.json"
 TERR = "data/terrain.json"
+STATIONS_HIST = "data/stations_hist.json"
+
+
+def corriger_par_stations(H, terr):
+    """Applique à l'historique la MÊME correction pluviométrique que le site.
+
+    `data/historique.json` est du SAFRAN pur (analyse 8 km, qui lisse les orages
+    cévenols). Le site, lui, corrige par les pluviomètres. Sans ce recalage, on
+    comparerait les cueillettes à un indice que le site n'affiche nulle part —
+    et on calerait les seuils de travers. No-op si l'archive stations manque.
+    Renvoie True si la correction a été appliquée."""
+    if not os.path.exists(STATIONS_HIST):
+        return False
+    try:
+        from stations import preparer_hist, corrige_historique_complet
+    except Exception as e:                    # dépendances absentes en local
+        print(f"(correction stations impossible : {type(e).__name__}: {e})")
+        return False
+    prep = preparer_hist(json.load(open(STATIONS_HIST, encoding="utf-8")))
+    if not prep:
+        return False
+    cellules = list(terr.values())
+    coef = {mid: (c["coef_terrain"] * c.get("coef_foret", 1.0)
+                  * c.get("coef_essence", 1.0)) for mid, c in terr.items()}
+    n, _ = corrige_historique_complet(H, cellules, coef, prep)
+    return bool(n)
 
 
 def charger_obs(argv):
@@ -91,8 +120,10 @@ def main():
     H = json.load(open(HIST, encoding="utf-8"))
     terr = {c["maille_id"]: c for c in json.load(open(TERR, encoding="utf-8"))["cellules"]}
     dates = H["dates"]
+    corrige = corriger_par_stations(H, terr)
     print(f"Observations : {chemin} ({len(obs)} point(s))")
-    print(f"Historique   : {dates[0]} → {dates[-1]}\n")
+    print(f"Historique   : {dates[0]} → {dates[-1]}"
+          f"{' · corrigé par les pluviomètres (comme le site)' if corrige else ' · SAFRAN brut'}\n")
 
     lignes = []
     for o in obs:

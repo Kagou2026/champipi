@@ -35,7 +35,8 @@ from fetch_stations import (fetch_stations, cumul_15j, serie_pluie,
                             etat_fraicheur, serie_temp, a_temperature)
 from compute_index import (calcul_indice, niveau, lag_jours, refroidissement,
                            modulation_choc, indices_lagues)
-from stations import corrige, choc_station
+from stations import (corrige, choc_station, preparer_hist,
+                      corrige_historique_complet)
 from versant import (stress_hydrothermique, indice_module,
                      coolness, indice_parcelle)
 from backfill_hist import historique_a_jour
@@ -185,13 +186,18 @@ def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None)
     return {"dates": dates, "mailles": out}
 
 
-def corrige_historique(historique, terrain, coef_par_maille, stations, jours=15):
+def corrige_historique(historique, terrain, coef_par_maille, stations, jours=15,
+                       apres=None):
     """Corrige la QUEUE récente du long historique (w, p, i, s) par les stations.
 
     Garantit que l'ANCRE du raccord de couture (dernier point) et le rejeu des
     derniers jours sont cohérents avec la carte du jour (mêmes valeurs corrigées).
-    Le passé au-delà de `jours` reste SAFRAN (les stations ne couvrent que le
-    récent). No-op si pas de stations ou d'historique."""
+    Sert désormais de COMPLÉMENT à `corrige_historique_complet` : l'archive
+    stations s'arrête 1 à 3 jours avant la fin de l'historique (délai de
+    publication du paquet climato), et ces tout derniers jours sont corrigés ici
+    depuis les 30 j téléchargés en direct. `apres` = ne traiter que les index
+    strictement supérieurs (ceux que l'archive n'a pas couverts). Sans archive du
+    tout, on retombe sur l'ancien comportement : les 15 derniers jours."""
     if not historique or not stations:
         return
     from datetime import date as _d
@@ -200,7 +206,8 @@ def corrige_historique(historique, terrain, coef_par_maille, stations, jours=15)
         return
     fin = _d.fromisoformat(dates[-1])
     recents = [k for k, dt in enumerate(dates)
-               if (fin - _d.fromisoformat(dt)).days <= jours]
+               if (fin - _d.fromisoformat(dt)).days <= jours
+               and (apres is None or k > apres)]
     cellinfo = {c["maille_id"]: c for c in terrain}
     for mid, arr in historique["mailles"].items():
         c = cellinfo.get(mid)
@@ -235,9 +242,11 @@ def corrige_historique(historique, terrain, coef_par_maille, stations, jours=15)
                     arr["i"][k] = idx[k]
 
 
-def traiter_departement(ctx, stations, emettre_stations=True):
+def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
     """Calcule le payload d'UN département. `stations` est partagé (récupéré une
-    seule fois pour toute la région, interpolé par maille ensuite)."""
+    seule fois pour toute la région, interpolé par maille ensuite). `prep_hist`
+    est l'archive stations préparée (cumuls 15 j glissants), partagée elle aussi :
+    elle sert à corriger TOUT l'historique, pas seulement sa queue."""
     code = ctx["code"]; nom = ctx["nom"]
     print(f"[{code} {nom}] 1/5 Terrain...")
     terrain = charger_terrain(ctx["terrain"])
@@ -278,7 +287,16 @@ def traiter_departement(ctx, stations, emettre_stations=True):
     if historique:
         print(f"    {historique['n_jours']} jours "
               f"({historique['debut']} → {historique['fin']})")
-        corrige_historique(historique, terrain, coef_par_maille, stations)
+        # 1) toute la période, depuis l'archive stations (2022 →) ;
+        n_corr, dernier_arch = corrige_historique_complet(
+            historique, terrain, coef_par_maille, prep_hist)
+        if n_corr:
+            print(f"    correction stations : {n_corr} points d'historique "
+                  f"corrigés (jusqu'au {historique['dates'][dernier_arch]})")
+        # 2) les 1-3 derniers jours, que l'archive n'a pas encore publiés, depuis
+        #    les 30 j téléchargés en direct — c'est l'ancre du raccord de couture.
+        corrige_historique(historique, terrain, coef_par_maille, stations,
+                           apres=(dernier_arch if n_corr else None))
     hist_lag = historique["mailles"] if historique else {}
 
     print("4/5 Calcul de l'indice par maille...")
@@ -612,6 +630,17 @@ def main():
         print(f"    ⚠ historique stations indisponible ({type(e).__name__}: {e})")
     if stations_hist is None:
         print("    (pas d'historique stations — calque limité au jour courant)")
+    # Préparation partagée par tous les départements : cumuls 15 j glissants de
+    # chaque poste, calculés une seule fois pour toute la période.
+    prep_hist = None
+    if stations_hist:
+        try:
+            prep_hist = preparer_hist(stations_hist)
+            if prep_hist:
+                print(f"    archive stations prête : {len(prep_hist['postes'])} postes "
+                      f"× {prep_hist['n']} jours (correction sur tout l'historique)")
+        except Exception as e:
+            print(f"    ⚠ archive stations inexploitable ({type(e).__name__}: {e})")
 
     resultats = []
     params = None
@@ -621,7 +650,9 @@ def main():
             print(f"  ⚠ {code} absent du registre — ignoré"); continue
         ctx = dict(d); ctx["code"] = code
         try:
-            payload = traiter_departement(ctx, stations, emettre_stations=(len(resultats) == 0))
+            payload = traiter_departement(ctx, stations,
+                                          emettre_stations=(len(resultats) == 0),
+                                          prep_hist=prep_hist)
         except Exception as e:
             # Résilience : un département en échec (données manquantes ou hoquet
             # d'une API) est ignoré pour ce run, sans vider toute la page.

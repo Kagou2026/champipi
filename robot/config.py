@@ -28,16 +28,19 @@ DEPARTEMENTS = {
            "contour": _CONTOUR.format(code="48", slug="lozere"),
            "terrain": "data/terrain.json", "foret_geom": "data/foret_geom.json",
            "versant_geom": "data/versant_geom.json", "hist": "data/historique.json",
+           "parcelles_geom": "data/parcelles_geom.json",
            "grille": "data/safran_grille.json"},
     "30": {"nom": "Gard", "bbox_l93": (711900, 6251673, 857981, 6383699),
            "contour": _CONTOUR.format(code="30", slug="gard"),
            "terrain": "data/terrain_30.json", "foret_geom": "data/foret_geom_30.json",
            "versant_geom": "data/versant_geom_30.json", "hist": "data/historique_30.json",
+           "parcelles_geom": "data/parcelles_geom_30.json",
            "grille": "data/safran_grille_30.json"},
     "07": {"nom": "Ardèche", "bbox_l93": (758588, 6340878, 859837, 6483726),
            "contour": _CONTOUR.format(code="07", slug="ardeche"),
            "terrain": "data/terrain_07.json", "foret_geom": "data/foret_geom_07.json",
            "versant_geom": "data/versant_geom_07.json", "hist": "data/historique_07.json",
+           "parcelles_geom": "data/parcelles_geom_07.json",
            "grille": "data/safran_grille_07.json"},
 }
 
@@ -303,6 +306,20 @@ VERSANT_TEMP_MID = 16.0    # centre de la plage optimale (≈ (12+20)/2)
 VERSANT_TEMP_DEMI = 8.0    # demi-amplitude thermique de référence
 VERSANT_POIDS_HYDRIQUE = 0.60
 VERSANT_POIDS_THERMIQUE = 0.40
+
+# --- Modulation par ALTITUDE de la parcelle (température par gradient) --------
+# Chaque face est éclatée en PARCELLES (robot/build_parcelles.py) portant leur
+# altitude propre (MNT IGN). Une parcelle plus haute que l'altitude moyenne de
+# sa maille est plus FRAÎCHE (gradient adiabatique ~ -0,6 °C/100 m) : elle se
+# comporte comme un ubac. On module donc l'indice, en RÉUTILISANT le stress
+# hydro-thermique du jour, exactement comme le versant :
+#     coolness = clamp( (alt_parcelle - alt_maille) / ALT_ECHELLE_M , -1, +1 )
+#     mod_alt  = 1 + ALT_K * coolness * stress
+#   -> sol sec / chaud (stress>0) : la parcelle haute (fraîche) est favorisée ;
+#   -> temps froid    (stress<0) : elle est pénalisée.
+# ALT_K est le paramètre principal À CALIBRER sur les cueillettes (comme VERSANT_K).
+ALT_K = 0.35
+ALT_ECHELLE_M = 300.0       # dénivelé (m) donnant l'effet maximal (coolness=±1)
 
 # Allègement de la géométrie versant (contours pixel 10 m -> page légère).
 # Les contours issus du raster sont en "marches d'escalier" : on simplifie

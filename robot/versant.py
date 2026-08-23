@@ -21,6 +21,7 @@ from config import (
     SWI_MIN, SWI_OPTIMAL, VERSANT_K,
     VERSANT_TEMP_MID, VERSANT_TEMP_DEMI,
     VERSANT_POIDS_HYDRIQUE, VERSANT_POIDS_THERMIQUE,
+    ALT_K, ALT_ECHELLE_M,
 )
 
 
@@ -61,4 +62,28 @@ def indice_module(indice_maille, expo, stress):
     if indice_maille is None:
         return None
     v = indice_maille * modulation(expo, stress)
+    return int(round(_clamp(v, 0.0, 100.0)))
+
+
+def coolness(alt_parcelle, alt_maille):
+    """Fraîcheur relative d'une parcelle dans [-1, +1] : + = plus haute/fraîche
+    que l'altitude moyenne de sa maille, - = plus basse/chaude. 0 si inconnu."""
+    if alt_parcelle is None or alt_maille is None:
+        return 0.0
+    return _clamp((alt_parcelle - alt_maille) / ALT_ECHELLE_M, -1.0, 1.0)
+
+
+def modulation_altitude(cool, stress):
+    """Multiplicateur altitude (parallèle au versant, même stress)."""
+    return 1.0 + ALT_K * cool * stress
+
+
+def indice_parcelle(indice_maille, expo, cool, stress):
+    """Indice d'une PARCELLE = indice maille modulé par le versant ET l'altitude.
+
+    Deux modulations dynamiques indépendantes, pilotées par le même `stress` :
+    versant (expo) et altitude/fraîcheur (cool). Bornées 0-100."""
+    if indice_maille is None:
+        return None
+    v = indice_maille * modulation(expo, stress) * modulation_altitude(cool, stress)
     return int(round(_clamp(v, 0.0, 100.0)))

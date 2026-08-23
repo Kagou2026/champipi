@@ -154,12 +154,21 @@ def decouper_departement(code, nom, payload, out_dir):
     feats = []
     for f in (payload.get("geojson", {}).get("features", []) or []):
         p = f.get("properties", {})
+        props = {"maille_id": p.get("maille_id"),
+                 "groupe": p.get("groupe"),
+                 "versant": p.get("versant"),
+                 "expo": p.get("expo")}
+        # Altitude PROPRE de la parcelle (rendu parcelle) : transportée en clair
+        # pour que la page module l'indice par l'altitude et l'affiche au clic.
+        if p.get("alt") is not None:
+            props["alt"] = p.get("alt")
+            if p.get("amin") is not None:
+                props["amin"] = p.get("amin")
+            if p.get("amax") is not None:
+                props["amax"] = p.get("amax")
         feats.append({
             "type": "Feature", "geometry": f["geometry"],
-            "properties": {"maille_id": p.get("maille_id"),
-                           "groupe": p.get("groupe"),
-                           "versant": p.get("versant"),
-                           "expo": p.get("expo")},
+            "properties": props,
         })
     # (a) allègement : jeter les confettis + arrondir les coordonnées.
     bbox_raw = _bbox_from_features(feats)

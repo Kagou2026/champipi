@@ -14,9 +14,11 @@ from datetime import datetime, timezone
 
 from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     SITE_TEMPLATE, SITE_OUTPUT, LAG_JOURS_PLAINE,
+                    LAG_JOURS_ALTITUDE, ALTITUDE_SEUIL,
                     DEPARTEMENT_CODE, NOM_DEPARTEMENT,
                     DEPARTEMENTS, ACTIVE_DEPARTEMENTS,
                     ESSENCE_GROUPES, ESSENCE_ORDRE, VERSANT_CLASSES, VERSANT_K,
+                    ALT_K, ALT_ECHELLE_M,
                     CHOC_K, CHOC_K_CHAUD, CHOC_MIN, CHOC_OPT,
                     CHOC_FENETRE_RECENTE, CHOC_FENETRE_REF,
                     TEMP_MIN, TEMP_OPT_BAS, TEMP_OPT_HAUT, TEMP_MAX,
@@ -30,7 +32,8 @@ from fetch_stations import (fetch_stations, cumul_15j, serie_pluie,
 from compute_index import (calcul_indice, niveau, lag_jours, refroidissement,
                            modulation_choc, indices_lagues)
 from stations import corrige, choc_station
-from versant import stress_hydrothermique, indice_module
+from versant import (stress_hydrothermique, indice_module,
+                     coolness, indice_parcelle)
 from backfill_hist import historique_a_jour
 
 
@@ -58,6 +61,22 @@ def charger_versant_geom(path=VERSANT_GEOM_FILE):
     try:
         with open(path, encoding="utf-8") as fp:
             return json.load(fp)
+    except FileNotFoundError:
+        return {}
+
+
+def charger_parcelles_geom(path):
+    """Faces éclatées en PARCELLES individuelles, chacune avec son altitude
+    propre (alt/amin/amax) issue du MNT IGN (robot/build_parcelles.py).
+
+    Structure : {maille_id: {groupe: {classe: [{expo, alt, amin, amax, geom}]}}}.
+    Absent = pas encore construit : le robot retombe sur versant_geom (une face
+    par maille×essence×versant, altitude de la maille)."""
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fp:
+            return json.load(fp).get("mailles", {})
     except FileNotFoundError:
         return {}
 
@@ -220,9 +239,18 @@ def traiter_departement(ctx, stations, emettre_stations=True):
     terrain = charger_terrain(ctx["terrain"])
     foret_geom = charger_foret_geom(ctx["foret_geom"])
     versant_geom = charger_versant_geom(ctx["versant_geom"])
-    src_rendu = "versant" if versant_geom else ("forêt" if foret_geom else "carrés 8 km")
+    parcelles_geom = charger_parcelles_geom(ctx.get("parcelles_geom"))
+    if parcelles_geom:
+        src_rendu = "parcelles"
+    elif versant_geom:
+        src_rendu = "versant"
+    elif foret_geom:
+        src_rendu = "forêt"
+    else:
+        src_rendu = "carrés 8 km"
     print(f"    {len(terrain)} mailles, {len(foret_geom)} emprises forêt, "
-          f"{len(versant_geom)} mailles versant → rendu : {src_rendu}")
+          f"{len(versant_geom)} mailles versant, {len(parcelles_geom)} mailles "
+          f"parcelles → rendu : {src_rendu}")
 
     print(f"[{code}] 2/5 Données SIM...")
     sim = organiser_par_maille(fetch_sim_features(bbox_l93=ctx["bbox_l93"]))
@@ -363,8 +391,35 @@ def traiter_departement(ctx, stations, emettre_stations=True):
         # maille MODULÉ par son exposition et le stress du jour (une face nord
         # ressort quand il fait sec, une face sud quand il fait froid).
         # Replis successifs : foret_geom (sans versant), puis carré 8 km.
+        par_parcelles = parcelles_geom.get(mid) if parcelles_geom else None
         par_groupe_v = versant_geom.get(mid) if versant_geom else None
-        if par_groupe_v:
+        if par_parcelles:
+            # Rendu PARCELLE : chaque bout de forêt est évalué pour lui-même
+            # (versant + altitude propre). L'indice cuit ici sert au top 5 ; la
+            # page le RECALCULE en direct par parcelle (moduleFace), donc geom
+            # ne l'embarque pas (cf. emit.py) — seule l'altitude est transportée.
+            for grp, faces in par_parcelles.items():
+                for classe, parts in faces.items():
+                    for o in parts:
+                        alt_p = o.get("alt")
+                        cool = coolness(alt_p, alt_c)
+                        ind = indice_parcelle(indice_jour, o["expo"], cool, stress)
+                        features.append({
+                            "type": "Feature", "geometry": o["geom"],
+                            "properties": {"maille_id": mid, "indice": ind,
+                                           "groupe": grp, "versant": classe,
+                                           "expo": o["expo"], "alt": alt_p,
+                                           "amin": o.get("amin"),
+                                           "amax": o.get("amax")},
+                        })
+                        if ind is not None:
+                            faces_top.append({
+                                "indice": ind, "niveau": niveau(ind),
+                                "maille_id": mid, "essence": grp,
+                                "versant": classe, "expo": o["expo"],
+                                "altitude": alt_p if alt_p is not None else cell["altitude"],
+                                "geologie": cell["geologie_classe"]})
+        elif par_groupe_v:
             for grp, faces in par_groupe_v.items():
                 for classe, o in faces.items():
                     ind = indice_module(indice_jour, o["expo"], stress)
@@ -548,6 +603,9 @@ def main():
         resultats.append((code, d["nom"], payload))
         if params is None:
             params = {"lag_indicatif": LAG_JOURS_PLAINE, "versant_k": VERSANT_K,
+                      "alt_k": ALT_K, "alt_echelle": ALT_ECHELLE_M,
+                      "alt_seuil": ALTITUDE_SEUIL,
+                      "lag_plaine": LAG_JOURS_PLAINE, "lag_altitude": LAG_JOURS_ALTITUDE,
                       "choc": payload["choc"],
                       "essence_groupes": payload["essence_groupes"]}
     if not resultats:

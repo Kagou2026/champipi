@@ -288,11 +288,25 @@ const NIVEAUX = [
   {max:75, label:"bon",         col:"var(--n4)"},
   {max:Infinity, label:"excellent", col:"var(--n5)"},
 ];
+// Couleur de l'indice : DÉGRADÉ CONTINU 0-100 (interpolation RVB entre 5 teintes
+// ancre, alignées sur les anciens paliers). Chaque point d'indice a sa nuance —
+// indispensable pour VOIR l'évaluation fine par parcelle (l'escalier à 5 couleurs
+// écrasait les écarts intra-maille). Les libellés (niveauLbl) restent, eux, à paliers.
+const COUL_STOPS=[[0,183,28,28],[25,239,108,0],[50,249,168,37],[70,124,179,66],[100,46,125,50]];
 function couleur(indice){
   if(indice===null||indice===undefined||Number.isNaN(indice)) return "#9e9e9e";
-  return (NIVEAUX.find(n=>indice<n.max)||NIVEAUX[NIVEAUX.length-1]).col
-    .replace("var(--n1)","#b71c1c").replace("var(--n2)","#ef6c00")
-    .replace("var(--n3)","#f9a825").replace("var(--n4)","#7cb342").replace("var(--n5)","#2e7d32");
+  const x=Math.max(0,Math.min(100,indice));
+  for(let i=1;i<COUL_STOPS.length;i++){
+    const b=COUL_STOPS[i];
+    if(x<=b[0]){
+      const a=COUL_STOPS[i-1], t=(x-a[0])/(b[0]-a[0]);
+      const r=Math.round(a[1]+(b[1]-a[1])*t),
+            g=Math.round(a[2]+(b[2]-a[2])*t),
+            bl=Math.round(a[3]+(b[3]-a[3])*t);
+      return `rgb(${r},${g},${bl})`;
+    }
+  }
+  return "rgb(46,125,50)";
 }
 
 // ============================================================================
@@ -367,6 +381,11 @@ document.getElementById("m-best").textContent = best ? (best.indice+" / 100") : 
 const map = L.map("map",{scrollWheelZoom:true}).setView([44.52,3.55],9);
 // Pane dédié aux forêts, SOUS les marqueurs (cueillettes/stations restent cliquables).
 map.createPane("foret"); map.getPane("foret").style.zIndex=350;
+// Rendu CANVAS des forêts : le passage à une évaluation PAR PARCELLE multiplie
+// le nombre de polygones (~1 500 faces → ~15 000 parcelles). Le SVG saturerait ;
+// le canvas peint tout sur une seule surface et reste fluide, même sur mobile.
+// Le survol/clic par parcelle reste natif (Leaflet fait le test point-in-polygone).
+const foretRenderer = L.canvas({pane:"foret", padding:0.5});
 // Cadrage initial : union des emprises des départements du registre.
 (function(){ const bb=L.latLngBounds([]);
   DEPTS.forEach(d=>{ if(d.bbox) bb.extend(L.latLngBounds([d.bbox[0][0],d.bbox[0][1]],[d.bbox[1][0],d.bbox[1][1]])); });
@@ -396,6 +415,24 @@ const alphaOf = k => (GRP[k] ? GRP[k].alpha : 1);
 // --- Rejeu temporel (historique long) --------------------------------------
 // Force de la modulation versant, embarquée par le robot (miroir de VERSANT_K).
 const VERSANT_K = (D.versant_k!=null? D.versant_k : 0.40);
+// Modulation par ALTITUDE de la parcelle (miroir de config ALT_K / ALT_ECHELLE_M).
+const ALT_K       = (PARAMS.alt_k!=null? PARAMS.alt_k : 0.35);
+const ALT_ECHELLE = (PARAMS.alt_echelle!=null? PARAMS.alt_echelle : 300.0);
+const ALT_SEUIL   = (PARAMS.alt_seuil!=null? PARAMS.alt_seuil : 1000);
+const LAG_PLAINE  = (PARAMS.lag_plaine!=null? PARAMS.lag_plaine : 10);
+const LAG_ALT     = (PARAMS.lag_altitude!=null? PARAMS.lag_altitude : 15);
+// Lag biologique propre à une altitude (réplique de compute_index.lag_jours).
+function lagPour(alt){ return (alt!=null && alt>=ALT_SEUIL) ? LAG_ALT : LAG_PLAINE; }
+// Fraîcheur relative d'une parcelle dans [-1,+1] (réplique de versant.coolness).
+function coolness(alt, altMaille){
+  if(alt==null || altMaille==null) return 0;
+  return Math.max(-1, Math.min(1, (alt-altMaille)/ALT_ECHELLE));
+}
+// Fraîcheur d'une feature parcelle depuis son alt propre et l'alt de sa maille.
+function coolFeat(f){
+  const m=D.mailles[f.properties.maille_id];
+  return coolness(f.properties.alt, m? m.altitude : null);
+}
 // Paramètres du choc thermique (miroir de config.py), pour l'affichage du détail.
 const CH = D.choc || {k:0.20,k_chaud:0.10,min:2,opt:6,recent:4,ref:7};
 if(CH.gel==null) CH.gel=1.0;   // seuil gel (garde-fou choc station), miroir GEL_SEUIL_C
@@ -499,12 +536,14 @@ function majLuneBox(){
   const a=document.getElementById("lune-box"); if(a) a.innerHTML=html;
   const b=document.getElementById("d-lune");   if(b) b.innerHTML=html;
 }
-// Indice d'une FACE de forêt = indice de la maille modulé par l'exposition et
-// le stress du jour (réplique de indice_module() côté Python).
-function moduleFace(base, expo, stress){
+// Indice d'une PARCELLE = indice de la maille modulé par DEUX termes dynamiques
+// pilotés par le même stress du jour : le versant (expo) et l'altitude propre
+// (cool). Réplique de versant.indice_parcelle() côté Python.
+function moduleFace(base, expo, stress, cool){
   if(base===null||base===undefined) return null;
-  if(expo===null||expo===undefined) return base;
-  let v = base * (1 + VERSANT_K*expo*(stress||0));
+  let v = base;
+  if(expo!==null && expo!==undefined) v *= (1 + VERSANT_K*expo*(stress||0));
+  if(cool)                            v *= (1 + ALT_K*cool*(stress||0));
   return Math.round(Math.max(0, Math.min(100, v)));
 }
 // Historique long : chargé À LA DEMANDE (hist_XX.json). Tant qu'il est absent,
@@ -551,6 +590,16 @@ function finaliserHistorique(histParDept){
 // Sélection courante dans le volet (maille cliquée) : permet au détail de suivre
 // la date du rejeu. Déclarés ici pour être initialisés avant le contrôle rejeu.
 let SELMID = null, SELFACE = null;
+// Parcelle actuellement SÉLECTIONNÉE (surlignage persistant sur la carte).
+let SELLAYER = null;
+function deselectLayer(){
+  if(SELLAYER){ try{ SELLAYER.setStyle(styleFor(SELLAYER.feature)); }catch(e){} SELLAYER=null; }
+}
+function selectLayer(l){
+  deselectLayer(); SELLAYER=l;
+  try{ l.setStyle({weight:2.6, color:"#111", fillOpacity:0.95}); }catch(e){}
+  try{ if(l.bringToFront) l.bringToFront(); }catch(e){}
+}
 const DETAIL_HOME = document.getElementById("detail").innerHTML;
 // Recale la carte du rejeu sur une date (défini par le contrôle rejeu, appelé
 // depuis les observations). Reste null si l'historique est absent.
@@ -570,12 +619,13 @@ function moyenneJour(k){
 // historique, face modulée par le versant à partir de la série SAFRAN).
 function indiceAt(f){
   const mid=f.properties.maille_id;
+  const cool=coolFeat(f);
   if(HCUR<0 || !H || !H.mailles[mid]){
     const m0=D.mailles[mid]; if(!m0) return null;
-    return moduleFace(m0.indice, f.properties.expo, m0.stress);
+    return moduleFace(m0.indice, f.properties.expo, m0.stress, cool);
   }
   const m=H.mailles[mid];
-  return moduleFace(m.i[HCUR], f.properties.expo, m.s[HCUR]);
+  return moduleFace(m.i[HCUR], f.properties.expo, m.s[HCUR], cool);
 }
 
 // Style d'un polygone : couleur = indice (date sélectionnée) ; opacité =
@@ -603,13 +653,13 @@ function construireCouches(){
   });
   Object.keys(parGroupe).forEach(g=>{
     const lyr=L.geoJSON({type:"FeatureCollection",features:parGroupe[g]},{
-      pane:"foret", style:styleFor,
+      pane:"foret", renderer:foretRenderer, style:styleFor,
       onEachFeature:(f,l)=>{
         l.on("click",(e)=>{
           if(pendingCapture){ L.DomEvent.stop(e); finirCapture(e.latlng); return; }
-          if(D.mailles[f.properties.maille_id]) ouvrirDetail(f.properties.maille_id, f.properties);});
-        l.on("mouseover",()=>l.setStyle({weight:2.2,fillOpacity:0.9}));
-        l.on("mouseout",()=>lyr.resetStyle(l));
+          if(D.mailles[f.properties.maille_id]){ selectLayer(l); ouvrirDetail(f.properties.maille_id, f.properties); }});
+        l.on("mouseover",()=>{ if(l!==SELLAYER) l.setStyle({weight:2.2,fillOpacity:0.9}); });
+        l.on("mouseout",()=>{ if(l!==SELLAYER) lyr.resetStyle(l); });
       }});
     layersByGroup[g]=lyr;
   });
@@ -695,6 +745,8 @@ function frDate(d){ if(!d) return ""; const p=d.split("-"); return p.length===3?
 // Recolore la carte et met à jour l'en-tête selon HCUR.
 function appliquer(){
   Object.values(layersByGroup).forEach(l=>{try{l.setStyle(styleFor);}catch(e){}});
+  // le recolorage écrase le surlignage de la parcelle sélectionnée : on le remet.
+  if(SELLAYER){ try{ SELLAYER.setStyle({weight:2.6,color:"#111",fillOpacity:0.95}); }catch(e){} }
   const dd=document.getElementById("dept-date"), dv=document.getElementById("dept-val"),
         dot=document.getElementById("dept-dot"), mm=document.getElementById("m-moy");
   if(HCUR<0){                       // vue live du jour : valeurs serveur
@@ -852,17 +904,32 @@ function dynAt(mid){
 
 // Ligne "versant" (face cliquée), recalculée pour la date courante.
 function versantHTML(face, base, faceInd){
-  if(!face || !face.versant) return "";
+  if(!face) return "";
+  const hasV = !!face.versant;
   const lbl = VERSANT_LBL[face.versant] || face.versant;
+  // Effet TOTAL de la parcelle (versant + altitude combinés) vs indice de base.
   let effet = "";
   if(base!=null && faceInd!=null && base>0){
     const d = Math.round((faceInd/base - 1)*100);
-    effet = d===0 ? " — sans effet ce jour-là"
-      : ` — indice <b>${faceInd}</b> contre ${base} de base : <b>${d>0?"+":""}${d}%</b> (${d>0?"favorisé":"pénalisé"})`;
+    effet = d===0 ? "sans effet ce jour-là"
+      : `indice <b>${faceInd}</b> contre ${base} de base : <b>${d>0?"+":""}${d}%</b> (${d>0?"favorisée":"pénalisée"})`;
+  }
+  // Ligne altitude : dénivelé de la parcelle par rapport à l'altitude moyenne
+  // de sa maille (8 km) — c'est ce qui l'individualise thermiquement.
+  const m = D.mailles[face.maille_id];
+  let altLigne = "";
+  if(face.alt!=null && m && m.altitude!=null){
+    const dz = Math.round(face.alt - m.altitude);
+    const amp = (face.amin!=null && face.amax!=null && face.amax>face.amin)
+      ? ` (${face.amin}–${face.amax} m)` : "";
+    const sens = dz>15 ? `${dz} m plus haut → plus frais/humide`
+      : (dz<-15 ? `${-dz} m plus bas → plus chaud/sec` : "à l'altitude moyenne de la maille");
+    altLigne = `<br>Altitude parcelle : <b>${face.alt} m</b>${amp} · ${sens} (maille ${Math.round(m.altitude)} m).`;
   }
   const col = face.expo>0.05 ? "#1565c0" : (face.expo<-0.05 ? "#b2182b" : "#8a8a80");
+  const faceLbl = hasV ? `Face : <b>${lbl}</b> · exposition ${face.expo>0?"+":""}${face.expo}` : "Parcelle";
   return `<p class="hint" style="border-left:3px solid ${col};padding-left:8px">
-      Face : <b>${lbl}</b> · exposition ${face.expo>0?"+":""}${face.expo}${effet}.</p>`;
+      ${faceLbl}${altLigne}${effet?"<br>Effet net : "+effet+".":"."}</p>`;
 }
 
 // Ouvre le détail d'une maille : structure + graphe d'historique (une seule fois),
@@ -870,12 +937,16 @@ function versantHTML(face, base, faceInd){
 function ouvrirDetail(mid, face){
   SELMID=mid; SELFACE=face||null;
   const p=D.mailles[mid];
+  // Altitude et lag PROPRES à la parcelle cliquée (repli sur la maille sinon).
+  const altAff = (face && face.alt!=null) ? face.alt : p.altitude;
+  const lagAff = lagPour(altAff);
+  const titre  = (face && face.alt!=null) ? "Parcelle" : "Maille";
   const geo={acide:"sol acide",neutre:"sol neutre",calcaire:"sol calcaire",inconnu:"sol ?"}[p.geologie_classe]||p.geologie_classe;
   const el=document.getElementById("detail");
   el.innerHTML=`
     <div style="display:flex;align-items:center;gap:8px">
       <button id="d-back" type="button" style="border:1px solid var(--line);background:#faf9f5;border-radius:7px;padding:2px 8px;font-size:12px;cursor:pointer;color:var(--ink)">‹ retour</button>
-      <h2 style="margin:0">Maille · ${p.altitude!=null?Math.round(p.altitude)+" m":""} <span class="pill">${geo}</span></h2>
+      <h2 style="margin:0">${titre} · ${altAff!=null?Math.round(altAff)+" m":""} <span class="pill">${geo}</span></h2>
     </div>
     <p class="hint" style="margin-top:8px">${p.geologie_descr||""}${p.coef_geologie!=null&&p.coef_geologie<0.5?" — terrain défavorable au cèpe (calcaire).":""}${p.coef_foret!=null&&p.coef_foret<0.6?" — maille peu boisée.":""}${p.coef_essence!=null&&p.coef_essence<0.6?" — essences peu favorables.":""}</p>
     <div id="d-versant"></div>
@@ -885,7 +956,7 @@ function ouvrirDetail(mid, face){
       ${metric("Indice cèpe","—","d-indice")}
       ${metric("Boisement",p.taux_boise!=null?Math.round(p.taux_boise*100)+" %":"—")}
       ${metric("Essence dominante",p.essence_dominante?(ESSLBL[p.essence_dominante]||p.essence_dominante):"—")}
-      ${metric("Pousse estimée","~"+p.lag_jours+" j")}
+      ${metric("Pousse estimée","~"+lagAff+" j")}
       ${metric("Humidité sol (SWI)","—","d-swi")}
       ${metric("Pluie 15 j","—","d-pluie")}
       ${metric("Température","—","d-temp")}
@@ -903,7 +974,7 @@ function ouvrirDetail(mid, face){
 }
 
 function fermerDetail(){
-  SELMID=null; SELFACE=null;
+  SELMID=null; SELFACE=null; deselectLayer();
   if(chart){ chart.destroy(); chart=null; }
   document.getElementById("detail").innerHTML=DETAIL_HOME;
   remplirDefaut();
@@ -960,23 +1031,29 @@ function majDetailDate(){
   if(!SELMID) return;
   const p=D.mailles[SELMID], dyn=dynAt(SELMID);
   const set=(id,v)=>{const e=document.getElementById(id); if(e) e.textContent=v;};
-  const indL = avecLune(dyn.indice, dyn.date);
+  // Indice de la PARCELLE sélectionnée (versant + altitude) ; repli maille.
+  let faceInd=null;
+  if(SELFACE){
+    const cool = coolness(SELFACE.alt, p.altitude);
+    faceInd = moduleFace(dyn.indice, SELFACE.expo, dyn.stress, cool);
+  }
+  const indBase = (SELFACE && faceInd!=null) ? faceInd : dyn.indice;
+  const indL = avecLune(indBase, dyn.date);
   set("d-indice",(indL!=null?indL:"—")+" · "+niveauLbl(indL));
   set("d-swi",dyn.swi!=null?dyn.swi:"—");
   set("d-pluie",dyn.pluie!=null?dyn.pluie+" mm":"—");
   set("d-temp",dyn.temp!=null?dyn.temp+" °C":"—");
   set("d-date",dyn.live?(dyn.date||"jour courant"):frDate(dyn.date));
   majLuneBox();
-  let faceInd=null;
-  if(SELFACE) faceInd = dyn.live? SELFACE.indice : moduleFace(dyn.indice, SELFACE.expo, dyn.stress);
   const dv=document.getElementById("d-versant"); if(dv) dv.innerHTML=versantHTML(SELFACE, dyn.indice, faceInd);
   const dc=document.getElementById("d-choc");
   if(dc){ const ts=(H && H.mailles[SELMID])? H.mailles[SELMID].t : null;
     const k = HCUR<0? HDATES.length-1 : HCUR;
     dc.innerHTML = chocHTML(refroidissementJS(ts,k), dyn.temp); }
   const note=document.getElementById("d-note");
+  const lagSel = lagPour((SELFACE && SELFACE.alt!=null) ? SELFACE.alt : p.altitude);
   if(note) note.textContent = dyn.live
-    ? "Conditions du jour courant. L'indice anticipe la pousse à ~"+p.lag_jours+" j."
+    ? "Conditions du jour courant. L'indice anticipe la pousse à ~"+lagSel+" j."
     : "Conditions SAFRAN au "+frDate(dyn.date)+" (rejeu).";
   if(chart && H && H.mailles[SELMID] && chart.data.datasets.length>=3){
     const k = HCUR<0? TODAY_IDX : HCUR;
@@ -1057,12 +1134,17 @@ function remplirDefaut(){
   remplirTop();
   const lg = document.getElementById("legend");
   if(lg){
-    lg.innerHTML = "<b>Légende</b>" + NIVEAUX.map(n=>{
-      const range = n.max===Infinity? "75–100" : (NIVEAUX.indexOf(n)===0?"0–15":"");
-      return `<div class="li"><span class="dot" style="background:${couleur(n.max-1)}"></span>${n.label}</div>`;
-    }).join("") + `<div class="li"><span class="dot" style="background:#9e9e9e"></span>donnée manquante</div>`
+    const ramp = "linear-gradient(90deg,rgb(183,28,28) 0%,rgb(239,108,0) 25%,"
+               + "rgb(249,168,37) 50%,rgb(124,179,66) 70%,rgb(46,125,50) 100%)";
+    lg.innerHTML = "<b>Légende</b>"
+    + `<div style="margin:4px 0 2px">`
+    + `<div style="height:12px;border-radius:6px;background:${ramp};border:1px solid var(--line)"></div>`
+    + `<div style="display:flex;justify-content:space-between;font-size:10px;color:#7a7a70;margin-top:2px">`
+    + `<span>0 · très faible</span><span>moyen</span><span>excellent · 100</span></div></div>`
+    + `<div class="li"><span class="dot" style="background:#9e9e9e"></span>donnée manquante</div>`
+    + `<div class="li" style="margin-top:6px">Indice en <b>dégradé continu</b> : chaque nuance est un point d'indice — deux parcelles voisines de teinte différente n'ont pas la même évaluation.</div>`
     + `<div class="li" style="margin-top:6px">Teinte : essences <b>principales</b> pleines, secondaires atténuées, autres pâles. Filtre en haut à droite de la carte.</div>`
-    + `<div class="li" style="margin-top:6px">Chaque forêt est découpée par <b>versant</b> — ubac (nord, frais/humide) et adret (sud, chaud/sec). L'indice de chaque face est modulé selon la météo du jour : sol sec ou chaud → l'ubac est favorisé, temps froid → l'adret. Cliquez une face pour le détail.</div>`
+    + `<div class="li" style="margin-top:6px">Chaque forêt est découpée en <b>parcelles</b>, évaluées une par une selon leur <b>versant</b> (ubac frais / adret chaud) et leur <b>altitude</b> propre (plus haut = plus frais). Sol sec ou chaud → ubac et parcelles hautes favorisés ; temps froid → l'inverse. Cliquez une parcelle pour son détail.</div>`
     + `<div class="li" style="margin-top:6px">Le <b>rejeu</b> (en bas à droite de la carte) permet de <b>remonter dans le temps</b> sur plusieurs années : curseur, saut jour/mois, choix d'une date, ▶ animation. ⤓ revient au jour courant. Utile pour comparer l'indice à ce que tu as réellement observé en forêt.</div>`;
   }
 }

@@ -27,7 +27,8 @@ from fetch_temp import temperatures_par_maille
 from fetch_prevision import prevision_par_maille
 from fetch_stations import (fetch_stations, cumul_15j, serie_pluie,
                             etat_fraicheur, serie_temp, a_temperature)
-from compute_index import calcul_indice, niveau, lag_jours, refroidissement, modulation_choc
+from compute_index import (calcul_indice, niveau, lag_jours, refroidissement,
+                           modulation_choc, indices_lagues)
 from stations import corrige, choc_station
 from versant import stress_hydrothermique, indice_module
 from backfill_hist import historique_a_jour
@@ -170,6 +171,7 @@ def corrige_historique(historique, terrain, coef_par_maille, stations, jours=15)
             continue
         coef = coef_par_maille.get(mid, 1.0)
         tser = arr.get("t", [])
+        touche = False
         for k in recents:
             p = arr["p"][k] if k < len(arr["p"]) else None
             if p is None:
@@ -180,13 +182,20 @@ def corrige_historique(historique, terrain, coef_par_maille, stations, jours=15)
                                      c["altitude"], stations, dates[k])
             if p_c == p and w_c == w:
                 continue   # aucune station utile ce jour-là → on garde SAFRAN
-            R = refroidissement(tser[:k + 1])
-            r = calcul_indice(w_c, p_c, t, coef)
             arr["w"][k] = None if w_c is None else round(w_c, 3)
             arr["p"][k] = round(p_c, 1)
-            arr["i"][k] = modulation_choc(r["indice"], R, t)
             arr["s"][k] = (round(stress_hydrothermique(w_c, t), 3)
                            if w_c is not None else None)
+            touche = True
+        if touche:
+            # Indice LAGGE recalculé sur les séries (corrigées) complètes : la
+            # queue garde le même décalage biologique que le backfill, sans
+            # couture avec le passé (cf. compute_index.indices_lagues).
+            idx = indices_lagues(arr.get("w", []), arr.get("p", []),
+                                 tser, coef, c["altitude"])
+            for k in recents:
+                if k < len(idx) and arr["i"][k] is not None:
+                    arr["i"][k] = idx[k]
 
 
 def traiter_departement(ctx, stations, emettre_stations=True):

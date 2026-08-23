@@ -26,7 +26,8 @@ import requests
 
 sys.path.insert(0, "robot")  # permet l'import direct quand lancé depuis la racine
 from config import TERRAIN_FILE  # noqa: E402
-from compute_index import calcul_indice, refroidissement, modulation_choc  # noqa: E402
+from compute_index import (calcul_indice, refroidissement, modulation_choc,  # noqa: E402
+                           indices_lagues)
 from versant import stress_hydrothermique  # noqa: E402
 
 DATASET_API = ("https://www.data.gouv.fr/api/1/datasets/"
@@ -86,6 +87,12 @@ def charger_coef(path=TERRAIN_FILE):
     return coef
 
 
+def charger_altitude(path=TERRAIN_FILE):
+    """{maille_id: altitude_m} — pilote la duree du lag biologique par maille."""
+    cells = json.load(open(path, encoding="utf-8"))["cellules"]
+    return {c["maille_id"]: c.get("altitude") for c in cells}
+
+
 def moissonner(urls, rev):
     """Renvoie {maille_id: {date: {"preliq":mm, "t":°C, "swi":x}}} filtré sur nos points."""
     data = {}
@@ -127,31 +134,39 @@ def moissonner(urls, rev):
     return data
 
 
-def series_par_maille(data, coef, debut=DEBUT):
+def series_par_maille(data, coef, debut=DEBUT, alt=None):
     """{maille_id: {date: (indice, stress, swi, pluie15, temp)}} pour dates >= `debut`.
 
     Le cumul pluie 15 j utilise la fenêtre complète (y compris des jours
     antérieurs à `debut`, présents dans `data` pour l'amorçage). On stocke aussi
-    swi/pluie/temp pour que le volet latéral puisse suivre la date choisie."""
+    swi/pluie/temp pour que le volet latéral puisse suivre la date choisie.
+
+    LAG : l'indice du jour d reflète les conditions du jour d − lag (lag selon
+    l'altitude de la maille, cf. compute_index.indices_lagues). Le mycélium
+    fructifie avec un décalage après la stimulation ; l'indice compte donc les
+    pluies/chocs passés, pas ceux du jour même. swi/pluie/temp restent, eux, les
+    valeurs OBSERVEES du jour d (le volet latéral montre la météo réelle)."""
+    alt = alt or {}
     out = {}
     for mid, jours in data.items():
         dates = sorted(jours)
-        tlist = [jours[x]["t"] for x in dates]   # série de température (chrono)
+        tlist = [jours[x]["t"] for x in dates]            # température (chrono)
+        swilist = [jours[x]["swi"] for x in dates]        # SWI (chrono)
+        pluie15list = []                                  # cumul pluie 15 j (chrono)
+        for i in range(len(dates)):
+            fenetre = dates[max(0, i - 14):i + 1]
+            pluie15list.append(sum(jours[x]["pluie"] for x in fenetre
+                                   if jours[x]["pluie"] is not None))
+        indices = indices_lagues(swilist, pluie15list, tlist,
+                                 coef.get(mid, 1.0), alt.get(mid))
         s = {}
         for i, d in enumerate(dates):
             if d < debut:
                 continue
-            fenetre = dates[max(0, i - 14):i + 1]
-            pluie15 = sum(jours[x]["pluie"] for x in fenetre
-                          if jours[x]["pluie"] is not None)
-            swi = jours[d]["swi"]; t = jours[d]["t"]
-            r = calcul_indice(swi, pluie15, t, coef.get(mid, 1.0))
-            # Choc thermique : refroidissement sur la série jusqu'à ce jour.
-            R = refroidissement(tlist[:i + 1])
-            indice = modulation_choc(r["indice"], R, t)
-            s[d] = (indice, round(stress_hydrothermique(swi, t), 3),
+            swi = swilist[i]; t = tlist[i]
+            s[d] = (indices[i], round(stress_hydrothermique(swi, t), 3),
                     None if swi is None else round(swi, 3),
-                    round(pluie15, 1),
+                    round(pluie15list[i], 1),
                     None if t is None else round(t, 1))
         out[mid] = s
     return out
@@ -209,9 +224,10 @@ def historique_a_jour(hist_out=HIST_OUT, grille_map=GRILLE_MAP, terrain_file=TER
     try:
         _, rev = charger_grille(grille_map)
         coef = charger_coef(terrain_file)
+        alt = charger_altitude(terrain_file)
         urls = lister_sources(an_min=date.today().year)   # année courante + latest
         data = moissonner(urls, rev)
-        recent = series_par_maille(data, coef, debut=_next(hmax))
+        recent = series_par_maille(data, coef, debut=_next(hmax), alt=alt)
         n_new = sum(len(s) for s in recent.values())
         for mid, s in recent.items():
             par.setdefault(mid, {}).update(s)
@@ -233,11 +249,12 @@ def main():
     print("2/4 Grille + coefficients terrain…")
     _, rev = charger_grille()
     coef = charger_coef()
+    alt = charger_altitude()
     print("3/4 Moisson (filtrée sur 82 mailles Lozère)…")
     data = moissonner(urls, rev)
     print(f"   {len(data)} mailles moissonnées")
     print("4/4 Calcul indice + stress et écriture…")
-    par = series_par_maille(data, coef, DEBUT)
+    par = series_par_maille(data, coef, DEBUT, alt)
     dates, mailles = aligner(par)
     payload = {"debut": DEBUT, "fin": dates[-1] if dates else None,
                "n_jours": len(dates), "dates": dates, "mailles": mailles}

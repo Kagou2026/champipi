@@ -159,3 +159,31 @@ def calcul_indice(swi, pluie_15j, temp, coef_terrain):
         "s_pluie": None if score_pluie(pluie_15j) is None else round(score_pluie(pluie_15j), 2),
         "s_temp": None if score_temperature(temp) is None else round(score_temperature(temp), 2),
     }
+
+
+def indices_lagues(swi, pluie15, temp, coef, altitude):
+    """Série d'indices cepe avec LAG biologique + choc thermique.
+
+    ``swi``, ``pluie15``, ``temp`` : listes ALIGNEES en ordre chronologique (une
+    valeur par jour, jours contigus). ``coef`` : coefficient terrain de la maille.
+    ``altitude`` : metres (pilote la duree du lag).
+
+    L'indice du jour k reflete les conditions du jour ``k - lag`` : la
+    fructification suit la stimulation (pluie qui rehumidifie + choc thermique)
+    avec un decalage biologique (LAG_JOURS_PLAINE / LAG_JOURS_ALTITUDE selon
+    l'altitude). Le refroidissement declencheur est evalue lui aussi a ``k - lag``.
+    Renvoie une liste d'indices (int ou None) de meme longueur que les entrees ;
+    None tant que l'amont disponible est plus court que le lag.
+    """
+    lag = lag_jours(altitude)
+    n = len(swi)
+    out = [None] * n
+    for k in range(n):
+        j = k - lag
+        if j < 0:
+            out[k] = None
+            continue
+        base = calcul_indice(swi[j], pluie15[j], temp[j], coef)["indice"]
+        R = refroidissement(temp[:j + 1])
+        out[k] = modulation_choc(base, R, temp[j])
+    return out

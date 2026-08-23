@@ -155,12 +155,14 @@ def build_hist(codes):
     # rev commun : (lambx,lamby) -> liste de (code, maille_id)
     rev = {}
     coef = {c: {} for c in codes}
+    alt = {c: {} for c in codes}
     for c in codes:
         grille = json.load(open(ctxs[c]["grille"], encoding="utf-8"))
         cells = json.load(open(ctxs[c]["terrain"], encoding="utf-8"))["cellules"]
         for cell in cells:
             coef[c][cell["maille_id"]] = (cell["coef_terrain"]
                 * cell.get("coef_foret", 1.0) * cell.get("coef_essence", 1.0))
+            alt[c][cell["maille_id"]] = cell.get("altitude")
         for mid, (lx, ly) in grille.items():
             rev.setdefault((lx, ly), []).append((c, mid))
     print(f"[hist {'+'.join(codes)}] moisson SAFRAN commune "
@@ -178,7 +180,7 @@ def build_hist(codes):
             d = data_pt.get((lx, ly))
             if d:
                 data_m[mid] = d
-        par = bh.series_par_maille(data_m, coef[c], bh.DEBUT)
+        par = bh.series_par_maille(data_m, coef[c], bh.DEBUT, alt[c])
         dates, mailles = bh.aligner(par)
         payload = {"debut": bh.DEBUT, "fin": dates[-1] if dates else None,
                    "n_jours": len(dates), "dates": dates, "mailles": mailles}

@@ -4,12 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Champipi — Cèpes en Lozère</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<!-- Lecture des métadonnées photo (EXIF/GPS) : JPEG + HEIC (iPhone) + PNG. Si ce
-     CDN ne répond pas, l'import photo bascule en saisie manuelle (marquer + dater). -->
-<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+<!-- PWA / mode terrain : identité d'application + icônes. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#2e5e34">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<!-- Librairies AUTO-HÉBERGÉES (vendor/) : plus aucun CDN. Indispensable au mode
+     terrain — le service worker les met en cache, la page s'ouvre sans réseau.
+     Versions figées : Leaflet 1.9.4, Chart.js 4.4.1, exifr 7.1.3. -->
+<link rel="stylesheet" href="vendor/leaflet.css">
+<script src="vendor/leaflet.js"></script>
+<script src="vendor/chart.umd.min.js"></script>
+<!-- Lecture des métadonnées photo (EXIF/GPS) : JPEG + HEIC (iPhone) + PNG. Si le
+     fichier ne charge pas, l'import photo bascule en saisie manuelle (marquer + dater). -->
+<script src="vendor/exifr.umd.js"></script>
 <style>
   :root{
     --n0:#9e9e9e; --n1:#b71c1c; --n2:#ef6c00; --n3:#f9a825; --n4:#7cb342; --n5:#2e7d32;
@@ -246,6 +257,28 @@
     .mob-collapse.open .mob-toggle::after{content:"✕";margin-left:6px;color:var(--muted);font-size:15px}
     .rejeu.mob-collapse.open{min-width:0;width:78vw!important}
   }
+  /* --- Mode terrain (PWA) : bandeau hors-ligne + panneau « Préparer ma sortie » --- */
+  #offband{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:1600;display:none;
+    background:#b71c1c;color:#fff;font-size:12.5px;font-weight:600;padding:6px 14px;
+    border-radius:20px;box-shadow:0 2px 10px rgba(0,0,0,.3);max-width:88vw;text-align:center}
+  #offband.on{display:block}
+  .prepctrl>button{width:34px;height:34px;font-size:18px;line-height:1;border:none;
+    border-radius:8px;background:rgba(255,255,255,.96);border:1px solid var(--line);
+    box-shadow:0 1px 6px rgba(0,0,0,.12);cursor:pointer}
+  .prepctrl>button:hover{background:#f2f1ec}
+  .prep{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:10px;
+    padding:9px 11px;font-size:12px;box-shadow:0 1px 6px rgba(0,0,0,.12);max-width:236px;line-height:1.45}
+  .prep-h{display:flex;align-items:center;justify-content:space-between;font-weight:650;margin-bottom:4px}
+  .prep-h button{border:none;background:none;color:var(--muted);font-size:11px;cursor:pointer;padding:0}
+  .prep .est{color:var(--muted);margin:4px 0}
+  .prep label{display:flex;align-items:center;gap:6px;margin:6px 0;cursor:pointer;color:var(--ink)}
+  .prep .go{width:100%;margin-top:4px;padding:7px 0;border:none;border-radius:8px;cursor:pointer;
+    background:#2e7d32;color:#fff;font-weight:650;font-size:12.5px}
+  .prep .go:disabled{opacity:.55;cursor:default}
+  .prep .bar{height:6px;background:#eceae4;border-radius:4px;overflow:hidden;margin-top:7px;display:none}
+  .prep .bar i{display:block;height:100%;width:0;background:#2e7d32;transition:width .2s}
+  .prep .etat{margin-top:5px;color:var(--muted);min-height:14px}
+  .prep .note{margin-top:6px;font-size:11px;color:var(--muted);font-style:italic}
 </style>
 </head>
 <body>
@@ -394,13 +427,16 @@ const foretRenderer = L.canvas({pane:"foret", padding:0.5});
   DEPTS.forEach(d=>{ if(d.bbox) bb.extend(L.latLngBounds([d.bbox[0][0],d.bbox[0][1]],[d.bbox[1][0],d.bbox[1][1]])); });
   try{ if(bb.isValid()) map.fitBounds(bb,{padding:[10,10]}); }catch(e){} })();
 const ATTRIB="Indice : SIM Météo-France, BRGM, Open-Meteo · Forêts : BD Forêt V2 IGN · Versant : MNT IGN RGE ALTI";
+// crossOrigin : les tuiles sont demandées en CORS -> le service worker peut les
+// mettre en cache « en clair » (une réponse opaque coûterait ~7 Mo de quota
+// chacune dans Chrome). Ces trois serveurs envoient bien Access-Control-Allow-Origin.
 const fondTopo=L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-  {maxZoom:17, attribution:"© OpenTopoMap (CC-BY-SA) · "+ATTRIB});
+  {maxZoom:17, crossOrigin:true, attribution:"© OpenTopoMap (CC-BY-SA) · "+ATTRIB});
 const fondOSM=L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-  {maxZoom:17, attribution:"© OpenStreetMap · "+ATTRIB});
+  {maxZoom:17, crossOrigin:true, attribution:"© OpenStreetMap · "+ATTRIB});
 const fondSat=L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-  {maxZoom:18, attribution:"Imagerie © Esri, Maxar, Earthstar Geographics · "+ATTRIB});
+  {maxZoom:18, crossOrigin:true, attribution:"Imagerie © Esri, Maxar, Earthstar Geographics · "+ATTRIB});
 fondTopo.addTo(map);   // fond par défaut : relief topographique (lisibilité du versant)
 // Sélecteur de fond de carte (Topo ⇄ Plan ⇄ Satellite).
 L.control.layers({"Topo (OpenTopoMap)":fondTopo,"Plan (OSM)":fondOSM,"Satellite":fondSat},
@@ -2145,6 +2181,156 @@ try{
 map.on("moveend", chargerGeomVisibles);
 chargerGeomVisibles();
 ajouterRejeuPlaceholder();
+
+// ============================================================================
+// MODE TERRAIN (PWA) : service worker + bandeau hors-ligne + « Préparer ma sortie ».
+// En forêt le réseau est faible ou absent : le service worker (sw.js) sert la
+// page, les librairies, les données et les tuiles déjà vues depuis le cache ;
+// le bouton 🎒 pré-télécharge la zone visible AVANT de partir. Tout ce bloc est
+// non-critique : enveloppé try/catch et placé en TOUTE FIN de script (après le
+// bloc mobile), il ne peut pas casser la page.
+// ============================================================================
+try{
+  const SW_OK = ("serviceWorker" in navigator) &&
+    (location.protocol==="https:" || ["localhost","127.0.0.1"].includes(location.hostname));
+  if(SW_OK) navigator.serviceWorker.register("./sw.js").catch(()=>{});
+
+  // --- Bandeau hors-ligne : rappelle qu'on regarde une copie locale ---------
+  const offband=document.createElement("div"); offband.id="offband";
+  document.body.appendChild(offband);
+  function majOffband(){
+    const off = !navigator.onLine;
+    offband.classList.toggle("on", off);
+    if(off) offband.textContent = "📵 Hors-ligne — données du "
+      + (frDate(D.date_donnees)||"dernier téléchargement")
+      + " · carte limitée aux zones préparées";
+  }
+  window.addEventListener("online", majOffband);
+  window.addEventListener("offline", majOffband);
+  majOffband();
+
+  // --- « Préparer ma sortie » ----------------------------------------------
+  // Énumération des tuiles de la vue courante (Web-Mercator standard), du zoom
+  // actuel vers les zooms « terrain », plafonnée : on n'aspire pas un serveur
+  // de tuiles public. D'où le conseil : zoomer sur son coin avant de préparer.
+  const TUILE_CAP=450, TUILE_KO=22, PREP_LS="champipi_prep";
+  function tuileXY(ll,z){ const n=Math.pow(2,z);
+    return { x:Math.floor((ll.lng+180)/360*n),
+             y:Math.floor((1-Math.log(Math.tan(ll.lat*Math.PI/180)+1/Math.cos(ll.lat*Math.PI/180))/Math.PI)/2*n) }; }
+  // Même choix de sous-domaine que Leaflet ((x+y) mod 3) : l'URL pré-chargée est
+  // EXACTEMENT celle que la carte demandera (le SW neutralise de toute façon a/b/c).
+  function urlTuile(x,y,z){
+    if(typeof fondSat!=="undefined" && map.hasLayer(fondSat))
+      return "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"+z+"/"+y+"/"+x;
+    const s="abc"[Math.abs(x+y)%3];
+    const h=(typeof fondOSM!=="undefined" && map.hasLayer(fondOSM))?"tile.openstreetmap.org":"tile.opentopomap.org";
+    return "https://"+s+"."+h+"/"+z+"/"+x+"/"+y+".png";
+  }
+  function planTuiles(){
+    const b=map.getBounds(), z0=Math.max(8,Math.round(map.getZoom()));
+    const zMax=Math.min(map.hasLayer(fondSat)?18:17,16);
+    const urls=[], zs=[];
+    for(let z=z0; z<=zMax && urls.length<TUILE_CAP; z++){
+      const a=tuileXY(b.getNorthWest(),z), c=tuileXY(b.getSouthEast(),z);
+      const n=(c.x-a.x+1)*(c.y-a.y+1);
+      if(z>z0 && urls.length+n>TUILE_CAP) break;   // niveau suivant entier, ou rien
+      let plein=false;
+      for(let x=a.x; x<=c.x && !plein; x++) for(let y=a.y; y<=c.y; y++){
+        urls.push(urlTuile(x,y,z));
+        if(urls.length>=TUILE_CAP){ plein=true; break; }
+      }
+      zs.push(z);
+    }
+    return {urls, zs};
+  }
+  function listeData(avecHist){
+    const vis=DEPTS.filter(d=>deptVisible(d)), out=[];
+    vis.forEach(d=>{ if(d.geom) out.push(d.geom); });
+    if(avecHist) vis.forEach(d=>{ if(d.hist) out.push(d.hist); });
+    return out;
+  }
+
+  // Contrôle 🎒 (topleft, sous le bouton GPS) : bouton -> panneau repliable.
+  const prepCtrl=L.control({position:"topleft"});
+  let prepDiv=null;
+  prepCtrl.onAdd=function(){
+    const root=L.DomUtil.create("div","prepctrl");
+    root.innerHTML=`<button id="prep-btn" type="button" title="Préparer ma sortie (hors-ligne)" aria-label="Préparer ma sortie">🎒</button>
+      <div class="prep" id="prep-pane" style="display:none">
+        <div class="prep-h">🎒 <b>Préparer ma sortie</b><button id="prep-x" type="button">fermer</button></div>
+        <div>Met en cache la <b>zone visible</b> pour consulter la carte sans réseau, en forêt. Zoome d'abord sur ton coin.</div>
+        <div class="est" id="prep-est"></div>
+        <label><input type="checkbox" id="prep-hist"> Inclure l'historique (rejeu, ~3&nbsp;Mo/dépt)</label>
+        <button class="go" id="prep-go" type="button">Télécharger la zone visible</button>
+        <div class="bar" id="prep-barw"><i id="prep-bar"></i></div>
+        <div class="etat" id="prep-etat"></div>
+        <div class="note">Astuce : fais-le en wifi/4G avant de partir. Tes cueillettes saisies sur le terrain restent enregistrées sur l'appareil, réseau ou pas.</div>
+      </div>`;
+    L.DomEvent.disableClickPropagation(root);
+    L.DomEvent.disableScrollPropagation(root);
+    prepDiv=root;
+    return root;
+  };
+  prepCtrl.addTo(map);
+
+  const $p=id=>document.getElementById(id);
+  function majEstimation(){
+    const est=$p("prep-est"); if(!est || $p("prep-pane").style.display==="none") return;
+    const plan=planTuiles();
+    const nData=listeData($p("prep-hist").checked).length;
+    const mo=(plan.urls.length*TUILE_KO/1024 + nData*2.5).toFixed(1);
+    est.textContent="Vue actuelle : "+plan.urls.length+" tuiles (zooms "
+      +plan.zs[0]+"→"+plan.zs[plan.zs.length-1]+") + "+nData+" fichier(s) de données ≈ "+mo+" Mo.";
+  }
+  function etatInitial(){
+    try{ const p=JSON.parse(localStorage.getItem(PREP_LS)||"null");
+      if(p && p.quand) $p("prep-etat").textContent="Dernière préparation : "+p.quand+" ("+p.n+" éléments).";
+    }catch(_){}
+  }
+  $p("prep-btn").addEventListener("click",()=>{
+    const pane=$p("prep-pane");
+    const ouvert=pane.style.display!=="none";
+    pane.style.display=ouvert?"none":"block";
+    if(!ouvert){ majEstimation(); etatInitial();
+      if(!SW_OK) { $p("prep-go").disabled=true; $p("prep-etat").textContent="Indisponible ici (nécessite le site https)."; } }
+  });
+  $p("prep-x").addEventListener("click",()=>{ $p("prep-pane").style.display="none"; });
+  $p("prep-hist").addEventListener("change",majEstimation);
+  map.on("moveend",majEstimation);
+
+  async function lancerPrep(){
+    const go=$p("prep-go"), etat=$p("prep-etat"), barw=$p("prep-barw"), bar=$p("prep-bar");
+    go.disabled=true; etat.textContent="Préparation…"; barw.style.display="block"; bar.style.width="0";
+    try{
+      // Demande au navigateur de NE PAS purger ce cache sous pression disque.
+      try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(_){}
+      const reg=await navigator.serviceWorker.ready;
+      if(!reg.active) throw new Error("sw");
+      const plan=planTuiles();
+      reg.active.postMessage({type:"PRECACHE", page:true,
+        data:listeData($p("prep-hist").checked), tuiles:plan.urls});
+    }catch(_){
+      etat.textContent="Échec : service worker indisponible. Recharge la page puis réessaie.";
+      go.disabled=false; barw.style.display="none";
+    }
+  }
+  $p("prep-go").addEventListener("click",lancerPrep);
+
+  if(SW_OK) navigator.serviceWorker.addEventListener("message",(ev)=>{
+    const m=ev.data||{}, etat=$p("prep-etat"), bar=$p("prep-bar");
+    if(m.type==="PRECACHE_PROGRESS"){
+      if(bar) bar.style.width=Math.round(100*m.fait/Math.max(1,m.total))+"%";
+      if(etat) etat.textContent="Téléchargement… "+m.fait+" / "+m.total;
+    }else if(m.type==="PRECACHE_FIN"){
+      const quand=new Date().toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+      try{ localStorage.setItem(PREP_LS,JSON.stringify({quand,n:m.ok})); }catch(_){}
+      if(etat) etat.textContent = m.echecs
+        ? "Zone préparée ("+m.ok+"/"+m.total+" — "+m.echecs+" échec(s), réessaie avec du réseau)."
+        : "✅ Zone prête pour le hors-ligne ("+m.ok+" éléments).";
+      const go=$p("prep-go"); if(go) go.disabled=false;
+    }
+  });
+}catch(e){ /* le mode terrain ne doit JAMAIS empêcher la carte de s'afficher */ }
 </script>
 </body>
 </html>

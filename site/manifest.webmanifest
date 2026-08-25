@@ -1,0 +1,17 @@
+{
+  "name": "Champipi — cèpes",
+  "short_name": "Champipi",
+  "description": "Conditions favorables à la pousse des cèpes (indice par parcelle, météo, cueillettes).",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f5f4f0",
+  "theme_color": "#2e5e34",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

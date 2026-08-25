@@ -60,6 +60,9 @@ jobs:
           # « stations météo » de suivre le curseur temporel au lieu de rester
           # figé sur la photo du jour. Chargé à la demande par la page.
           cp site/stations_hist.json public/ 2>/dev/null || true
+          # Mode terrain (PWA) : service worker + manifest + icônes + vendor/
+          cp site/sw.js site/manifest.webmanifest site/icon-192.png site/icon-512.png site/apple-touch-icon.png public/
+          cp -r site/vendor public/vendor
           echo "Contenu de public/ :"; ls -la public/
 
       - name: Préparer l'artefact Pages

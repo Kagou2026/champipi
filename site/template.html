@@ -863,9 +863,14 @@ async function chargerHistorique(){
 function activerRejeu(){
   if(!(H && HDATES.length>1)) return;
   // index de la date la plus proche d'une chaîne "YYYY-MM-DD".
+  // (comparaison en JOURS : "2026-09-07"-"2026-09-06" sur des chaînes vaut NaN,
+  //  ce qui rendait la recherche non symétrique et pouvait bloquer sur un trou).
+  const jour=(x)=> Date.UTC(+x.slice(0,4), +x.slice(5,7)-1, +x.slice(8,10))/864e5;
   const idxProche=(s)=>{ if(s<=HDATES[0]) return 0; if(s>=HDATES[HDATES.length-1]) return HDATES.length-1;
     let lo=0,hi=HDATES.length-1; while(lo<hi){const m=(lo+hi)>>1; if(HDATES[m]<s) lo=m+1; else hi=m;}
-    return (lo>0 && (s-HDATES[lo-1] < HDATES[lo]-s))? lo-1 : lo; };
+    if(HDATES[lo]===s || lo===0) return lo;
+    const js=jour(s), dPrev=js-jour(HDATES[lo-1]), dNext=jour(HDATES[lo])-js;
+    return dPrev<dNext ? lo-1 : lo; };
   const rc=L.control({position:"bottomright"});
   rc.onAdd=function(){
     const div=L.DomUtil.create("div","rejeu");
@@ -913,7 +918,9 @@ function activerRejeu(){
     dateIn.value=HDATES[TODAY_IDX];
     lblD.textContent="aujourd'hui"; lblD.style.color=COL_AUJ; appliquer(); }
   const base=()=> HCUR<0? TODAY_IDX : HCUR;
-  const shift=(n)=>{ const d=new Date(HDATES[base()]+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n);
+  // ±1 jour = pas d'INDEX (jamais bloqué par une date absente) ; ±30 = par date.
+  const shift=(n)=>{ if(Math.abs(n)===1){ setIdx(base()+n); return; }
+    const d=new Date(HDATES[base()]+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n);
     setIdx(idxProche(d.toISOString().slice(0,10))); };
   allerADate = (ds)=>{ if(ds) setIdx(idxProche(ds)); };   // utilisé par les cueillettes
   rgPast.addEventListener("input",()=>{stopPlay(); setIdx(+rgPast.value);});

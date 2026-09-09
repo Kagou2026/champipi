@@ -137,28 +137,37 @@ async function repPage(req) {
   }
 }
 
-/* Données versionnées : cache d'abord (toute version), MAJ en arrière-plan. */
+/* Données versionnées : la version EXACTE (?v=hash) demandée par la page est
+   servie du cache si on l'a ; sinon réseau d'abord (la page et ses données
+   doivent être de la même génération : l'historique s'arrête à hist_fin et la
+   prévision inline démarre juste après — servir un hist de la veille creuse un
+   trou d'un jour dans la timeline). Une ancienne version n'est servie qu'en
+   dernier recours (hors-ligne / réseau qui rame). */
 async function repData(req, e) {
   const c = await caches.open(CACHE_DATA);
-  const hit = await c.match(req, { ignoreSearch: true });
-  if (hit) {
-    if (hit.url !== req.url) e.waitUntil(rafraichirData(c, req));  // version plus récente publiée
-    return hit;
-  }
-  const r = await fetch(req);
-  if (r && r.ok) await c.put(req, r.clone());
-  return r;
-}
-async function rafraichirData(c, req) {
+  const exact = await c.match(req);                       // même version
+  if (exact) return exact;
+  const ancien = await c.match(req, { ignoreSearch: true }); // autre version
   try {
-    const r = await fetch(req);
-    if (!(r && r.ok)) return;
+    const r = await fetchAvecDelai(req, ancien ? NET_TIMEOUT_MS : 60000);
+    if (r && r.ok) {
+      e.waitUntil(rangerData(c, req, r.clone()));
+      return r;
+    }
+    throw new Error("http " + (r && r.status));
+  } catch (_) {
+    if (ancien) return ancien;                             // mieux que rien
+    throw _;
+  }
+}
+async function rangerData(c, req, r) {
+  try {
     // purge des anciennes versions du même fichier avant d'écrire la nouvelle
     const chemin = new URL(req.url).pathname;
     for (const k of await c.keys()) {
       if (new URL(k.url).pathname === chemin) await c.delete(k);
     }
-    await c.put(req, r.clone());
+    await c.put(req, r);
   } catch (_) {}
 }
 

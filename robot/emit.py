@@ -267,6 +267,22 @@ def ecrire_sorties(departements, template_path, out_dir, params,
     with open(out_html, "w", encoding="utf-8") as fp:
         fp.write(html)
 
+    # -- version.json : « quelle génération est en ligne ? » ---------------------
+    # Lu par la page au lancement (fetch no-store, ~200 octets, public : aucune
+    # donnée sensible, juste des dates et les noms des fichiers open-data déjà
+    # publics). Si genere_le diffère de celui embarqué dans la page affichée,
+    # la PWA sait qu'elle regarde une copie périmée et télécharge la nouvelle
+    # génération (page + fichiers de données déjà en cache) avant de recharger.
+    version = {
+        "genere_le": genere_le,
+        "date_donnees": max((d.get("date_donnees") or "" for d in dept_data.values()),
+                            default=None) or None,
+        "fichiers": [u for r in registre for u in (r["geom"], r["hist"]) if u]
+                    + ([stations_hist_ref["url"]] if stations_hist_ref else []),
+    }
+    with open(os.path.join(out_dir, "version.json"), "w", encoding="utf-8") as fp:
+        json.dump(version, fp, ensure_ascii=False, separators=(",", ":"))
+
     # rapport de tailles (utile en CI)
     def _mb(name):
         p = os.path.join(out_dir, name)

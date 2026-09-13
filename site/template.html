@@ -262,6 +262,25 @@
     background:#b71c1c;color:#fff;font-size:12.5px;font-weight:600;padding:6px 14px;
     border-radius:20px;box-shadow:0 2px 10px rgba(0,0,0,.3);max-width:88vw;text-align:center}
   #offband.on{display:block}
+  /* Bandeau de mise à jour (vérification au lancement, téléchargement, à jour) */
+  #majband{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:1601;
+    display:none;align-items:center;gap:8px;background:#37474f;color:#fff;font-size:12.5px;
+    font-weight:600;padding:6px 14px;border-radius:20px;box-shadow:0 2px 10px rgba(0,0,0,.3);
+    max-width:88vw;text-align:center;line-height:1.35;transition:background .3s}
+  #majband.on{display:flex}
+  #majband.ok{background:#2e7d32}
+  #majband.dl{background:#1565c0}
+  #majband.warn{background:#e65100}
+  #majband .majspin{display:none;width:14px;height:14px;flex:none;border-radius:50%;
+    border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:majrot .8s linear infinite}
+  #majband.check .majspin,#majband.dl .majspin{display:block}
+  #majband .majbar{position:absolute;left:12px;right:12px;bottom:2px;height:2px;
+    background:rgba(255,255,255,.25);border-radius:2px;overflow:hidden;display:none}
+  #majband.dl .majbar{display:block}
+  #majband .majbar>i{display:block;height:100%;width:0;background:#fff;transition:width .3s}
+  #majband button{flex:none;border:none;border-radius:12px;padding:3px 10px;font:inherit;
+    font-size:12px;background:#fff;color:#1b1b1b;cursor:pointer}
+  @keyframes majrot{to{transform:rotate(360deg)}}
   .prepctrl>button{width:34px;height:34px;font-size:18px;line-height:1;border:none;
     border-radius:8px;background:rgba(255,255,255,.96);border:1px solid var(--line);
     box-shadow:0 1px 6px rgba(0,0,0,.12);cursor:pointer}
@@ -2216,6 +2235,118 @@ try{
   window.addEventListener("offline", majOffband);
   majOffband();
 
+  // --- Vérification de mise à jour au lancement ----------------------------
+  // Pourquoi : sur Android la PWA reste des jours en mémoire sans jamais être
+  // « relancée », et quand le réseau rame le SW sert la page de la VEILLE
+  // (réseau-d'abord avec délai 6 s, puis cache). On pouvait donc regarder des
+  // données périmées sans le savoir. Principe : version.json (public, ~200 o,
+  // jamais mis en cache) dit quelle génération est en ligne ; on la compare à
+  // celle embarquée dans CETTE page (RAW.genere_le). Si elle diffère, le SW
+  // télécharge la nouvelle page + les nouvelles versions des données déjà en
+  // cache (message MAJ), puis on recharge : la page fraîche est servie du cache.
+  const majband=document.createElement("div"); majband.id="majband";
+  majband.innerHTML='<span class="majspin"></span><span id="majtxt"></span>'
+    +'<button id="majbtn" hidden></button><span class="majbar"><i id="majfill"></i></span>';
+  document.body.appendChild(majband);
+  const majtxt=majband.querySelector("#majtxt"), majbtn=majband.querySelector("#majbtn"),
+        majfill=majband.querySelector("#majfill");
+  let majTimer=null, majGarde=null, majEnCours=false, majDerniere=0, interaction=false;
+  ["pointerdown","keydown","wheel"].forEach(ev=>window.addEventListener(ev,()=>{interaction=true;},{passive:true}));
+  // Affiche le bandeau. ms>0 = disparaît tout seul ; btn={label,fn} = bouton d'action.
+  function majShow(cls, txt, ms, btn){
+    clearTimeout(majTimer);
+    majband.className="on "+cls; majtxt.textContent=txt; majfill.style.width="0";
+    if(btn){ majbtn.hidden=false; majbtn.textContent=btn.label; majbtn.onclick=btn.fn; }
+    else majbtn.hidden=true;
+    if(ms) majTimer=setTimeout(()=>{ majband.className=""; }, ms);
+  }
+  const dateDonnees=(v)=>frDate((v&&v.date_donnees)||D.date_donnees)||"?";
+  async function verifierMaj(){
+    if(majEnCours || !navigator.onLine) return;
+    majEnCours=true; majDerniere=Date.now();
+    majShow("check","Vérification des données…");
+    let v=null;
+    try{
+      const ctl=("AbortController" in window)?new AbortController():null;
+      const t=setTimeout(()=>{ if(ctl) ctl.abort(); }, 8000);
+      const r=await fetch("version.json?t="+Date.now(), {cache:"no-store", signal:ctl?ctl.signal:undefined});
+      clearTimeout(t);
+      if(r.ok) v=await r.json();
+    }catch(_){}
+    if(!v || !v.genere_le){
+      majEnCours=false;
+      majShow("warn","⚠ Vérification impossible (réseau ?) — données du "+dateDonnees(), 7000);
+      return;
+    }
+    if(v.genere_le===RAW.genere_le){
+      majEnCours=false;
+      try{ localStorage.removeItem("champipi_maj_tentee"); }catch(_){}
+      majShow("ok","✅ À jour — données du "+dateDonnees(v), 4000);
+      return;
+    }
+    // Une génération plus récente est en ligne.
+    // Anti-boucle : si on vient DÉJÀ de télécharger cette génération et que la
+    // page servie est toujours l'ancienne (CDN GitHub Pages pas encore à jour,
+    // délai jusqu'à ~10 min), on ne recommence pas en boucle.
+    let tentee=null; try{ tentee=localStorage.getItem("champipi_maj_tentee"); }catch(_){}
+    if(tentee===v.genere_le){
+      majEnCours=false;
+      majShow("warn","⚠ Nouvelle version en ligne, pas encore servie par le réseau — données du "+dateDonnees(), 0,
+        {label:"Réessayer", fn:()=>{ try{ localStorage.removeItem("champipi_maj_tentee"); }catch(_){} verifierMaj(); }});
+      return;
+    }
+    try{ localStorage.setItem("champipi_maj_tentee", v.genere_le); }catch(_){}
+    if(!SW_OK){
+      majEnCours=false;
+      majShow("dl","⬇ Nouvelles données du "+dateDonnees(v)+" disponibles", 0,
+        {label:"Recharger", fn:()=>location.reload()});
+      return;
+    }
+    majShow("dl","⬇ Nouvelles données ("+dateDonnees(v)+") — téléchargement…");
+    try{
+      const reg=await navigator.serviceWorker.ready;
+      if(!reg.active) throw new Error("sw");
+      reg.active.postMessage({type:"MAJ", id:"maj", fichiers:v.fichiers||[]});
+      // Garde-fou : réseau qui s'effondre en cours de route.
+      majGarde=setTimeout(()=>{
+        if(!majEnCours) return; majEnCours=false;
+        majShow("warn","⚠ Téléchargement trop long — tu restes sur les données du "+dateDonnees(), 0,
+          {label:"Réessayer", fn:verifierMaj});
+      }, 90000);
+    }catch(_){
+      majEnCours=false;
+      majShow("warn","⚠ Mise à jour impossible — données du "+dateDonnees(), 0,
+        {label:"Recharger", fn:()=>location.reload()});
+    }
+  }
+  function finMaj(m){
+    clearTimeout(majGarde); majEnCours=false;
+    if(!m.page_ok){
+      majShow("warn","⚠ Téléchargement échoué — données du "+dateDonnees(), 0,
+        {label:"Réessayer", fn:verifierMaj});
+      return;
+    }
+    // Page fraîche en cache : on recharge tout de suite si l'utilisateur n'a
+    // encore rien touché (il attend l'app), sinon on le laisse choisir.
+    if(!interaction){ majShow("ok","✅ Nouvelles données prêtes — actualisation…"); setTimeout(()=>location.reload(), 600); }
+    else majShow("ok","✅ Nouvelles données prêtes", 0, {label:"Afficher", fn:()=>location.reload()});
+  }
+  if(SW_OK) navigator.serviceWorker.addEventListener("message",(ev)=>{
+    const m=ev.data||{}; if(m.id!=="maj") return;
+    if(m.type==="PRECACHE_PROGRESS"){
+      majfill.style.width=Math.round(100*m.fait/Math.max(1,m.total))+"%";
+      majtxt.textContent="⬇ Téléchargement… "+m.fait+" / "+m.total;
+    }else if(m.type==="PRECACHE_FIN") finMaj(m);
+  });
+  // Au lancement (une fois le SW enregistré, sinon le message MAJ n'a personne
+  // à qui parler), puis à chaque retour au premier plan après > 10 min (PWA
+  // Android gardée en mémoire) et au retour du réseau (> 2 min après le dernier).
+  setTimeout(verifierMaj, SW_OK?1500:0);
+  document.addEventListener("visibilitychange",()=>{
+    if(document.visibilityState==="visible" && Date.now()-majDerniere>10*60000) verifierMaj();
+  });
+  window.addEventListener("online",()=>{ if(Date.now()-majDerniere>2*60000) verifierMaj(); });
+
   // --- « Préparer ma sortie » ----------------------------------------------
   // Énumération des tuiles de la vue courante (Web-Mercator standard), du zoom
   // actuel vers les zooms « terrain », plafonnée : on n'aspire pas un serveur
@@ -2314,7 +2445,7 @@ try{
       const reg=await navigator.serviceWorker.ready;
       if(!reg.active) throw new Error("sw");
       const plan=planTuiles();
-      reg.active.postMessage({type:"PRECACHE", page:true,
+      reg.active.postMessage({type:"PRECACHE", id:"prep", page:true,
         data:listeData($p("prep-hist").checked), tuiles:plan.urls});
     }catch(_){
       etat.textContent="Échec : service worker indisponible. Recharge la page puis réessaie.";
@@ -2325,6 +2456,7 @@ try{
 
   if(SW_OK) navigator.serviceWorker.addEventListener("message",(ev)=>{
     const m=ev.data||{}, etat=$p("prep-etat"), bar=$p("prep-bar");
+    if(m.id && m.id!=="prep") return;      // réponses de la mise à jour (id "maj") : pas pour ce panneau
     if(m.type==="PRECACHE_PROGRESS"){
       if(bar) bar.style.width=Math.round(100*m.fait/Math.max(1,m.total))+"%";
       if(etat) etat.textContent="Téléchargement… "+m.fait+" / "+m.total;

@@ -119,9 +119,17 @@ async function limiterTuiles(c) {
   } catch (_) {}
 }
 
-/* Page ("./") : réseau d'abord (fraîcheur), cache après NET_TIMEOUT_MS. */
+/* Page ("./") : réseau d'abord (fraîcheur), cache après NET_TIMEOUT_MS.
+   Exception : juste après une mise à jour (message MAJ ci-dessous), la page
+   fraîche vient d'être rangée dans le cache — le rechargement la sert
+   directement, sans la re-télécharger ni attendre le réseau. */
+let _pageFraicheA = 0;
 async function repPage(req) {
   const c = await caches.open(CACHE_APP);
+  if (Date.now() - _pageFraicheA < 60000) {
+    const hit = await c.match("./", { ignoreSearch: true });
+    if (hit) return hit;
+  }
   try {
     const r = await fetchAvecDelai(req, NET_TIMEOUT_MS);
     if (r && r.ok) { await c.put("./", r.clone()); return r; }
@@ -191,6 +199,9 @@ self.addEventListener("fetch", (e) => {
   if (url.origin !== self.location.origin) return;   // autres domaines : défaut
 
   if (req.mode === "navigate") { e.respondWith(repPage(req)); return; }
+  if (url.pathname.endsWith("/version.json")) {          // toujours frais, jamais caché
+    e.respondWith(fetch(req, { cache: "no-store" })); return;
+  }
   if (estData(url)) { e.respondWith(repData(req, e)); return; }
   if (/\/(vendor\/|icon-|apple-touch-icon|manifest\.webmanifest)/.test(url.pathname) ||
       url.pathname.endsWith("/sw.js")) {
@@ -202,24 +213,47 @@ self.addEventListener("fetch", (e) => {
    « Préparer ma sortie » : la page envoie la liste de ce qu'il faut mettre en
    cache (page + données + tuiles de la zone visible). Le SW télécharge avec
    une concurrence limitée et renvoie la progression au client demandeur.
-   Message attendu : {type:"PRECACHE", page:bool, data:[url], tuiles:[url]}
+   Message attendu : {type:"PRECACHE", id?, page:bool, data:[url], tuiles:[url]}
+   (l'`id` éventuel est renvoyé tel quel dans chaque réponse : la page distingue
+   ainsi une préparation de sortie d'une mise à jour de génération)
    Réponses        : {type:"PRECACHE_PROGRESS", fait, total}
                      {type:"PRECACHE_FIN", ok, echecs, total}
    -------------------------------------------------------------------------- */
 self.addEventListener("message", (e) => {
   const m = e.data || {};
-  if (m.type !== "PRECACHE") return;
   const client = e.source;
-  e.waitUntil(precache(m, client));
+  if (m.type === "PRECACHE") e.waitUntil(precache(m, client));
+  else if (m.type === "MAJ") e.waitUntil(majGeneration(m, client));
 });
+
+/* Mise à jour de génération (lancement de la PWA) : la page a lu version.json
+   et constaté qu'une génération plus récente est en ligne. On télécharge la
+   nouvelle page, puis les nouvelles versions des SEULS fichiers de données dont
+   une ancienne version est déjà en cache (= ceux que l'utilisateur utilise :
+   inutile d'aspirer 7 Mo de stations_hist s'il n'a jamais ouvert ce calque).
+   Message : {type:"MAJ", id, fichiers:[url?v=hash]} → mêmes réponses que PRECACHE,
+   plus `page_ok` dans PRECACHE_FIN. */
+async function majGeneration(m, client) {
+  let data = [];
+  try {
+    const c = await caches.open(CACHE_DATA);
+    const enCache = new Set((await c.keys()).map((k) => new URL(k.url).pathname));
+    data = (m.fichiers || []).filter((u) => {
+      try { return enCache.has(new URL(u, self.location.href).pathname); } catch (_) { return false; }
+    });
+  } catch (_) {}
+  await precache({ id: m.id, page: true, data, tuiles: [] }, client);
+}
 
 async function precache(m, client) {
   const taches = [];
+  let pageOk = !m.page;
   if (m.page) {
     taches.push(async () => {
       const c = await caches.open(CACHE_APP);
       const r = await fetch("./", { cache: "no-cache" });
-      if (r && r.ok) await c.put("./", r.clone()); else throw 0;
+      if (r && r.ok) { await c.put("./", r.clone()); pageOk = true; _pageFraicheA = Date.now(); }
+      else throw 0;
     });
   }
   (m.data || []).forEach((u) => taches.push(async () => {
@@ -243,7 +277,7 @@ async function precache(m, client) {
 
   const total = taches.length;
   let fait = 0, echecs = 0, idx = 0;
-  const dire = (msg) => { try { client && client.postMessage(msg); } catch (_) {} };
+  const dire = (msg) => { try { if (m.id) msg.id = m.id; client && client.postMessage(msg); } catch (_) {} };
   async function ouvrier() {
     while (idx < taches.length) {
       const t = taches[idx++];
@@ -254,5 +288,5 @@ async function precache(m, client) {
   }
   // Concurrence 5 : assez pour aller vite, poli pour les serveurs de tuiles.
   await Promise.all([1, 2, 3, 4, 5].map(ouvrier));
-  dire({ type: "PRECACHE_FIN", ok: total - echecs, echecs, total });
+  dire({ type: "PRECACHE_FIN", ok: total - echecs, echecs, total, page_ok: pageOk });
 }

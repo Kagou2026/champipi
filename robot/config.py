@@ -275,6 +275,7 @@ GEL_SEUIL_C = 1.0            # °C : T° min récente <= ce seuil → garde-fou 
 PREV_HORIZON_JOURS = 16    # nb de jours de prévision exposés
 PREV_PAST_DAYS = 20        # passé récent récupéré (amorçage pluie 15 j / choc)
 PREV_CAP_SOL_MM = 120.0    # capacité sol pour la projection du SWI (heuristique)
+SERIE_COURTE_JOURS = 30    # série courte inline par maille (queue laggée de l'historique)
 
 # --- Versant / exposition (modulation dynamique de l'indice) ---------------
 # Le versant (ubac/adret) n'est PAS un coefficient statique comme la géologie :

@@ -27,7 +27,7 @@ from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     STATION_SERIE_JOURS, STATION_FENETRE_JOURS,
                     STATION_FRESH_OK_J,
                     STATION_FRESH_MUET_J, STATION_COUV_MIN,
-                    PREV_HORIZON_JOURS, PREV_CAP_SOL_MM)
+                    PREV_HORIZON_JOURS, PREV_CAP_SOL_MM, SERIE_COURTE_JOURS)
 from fetch_sim import fetch_sim_features, organiser_par_maille
 from fetch_temp import temperatures_par_maille
 from fetch_prevision import prevision_par_maille
@@ -374,6 +374,24 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
                           "pluie_15j": p_h, "temp": t_h,
                           "indice": ind_h,
                           "stress": round(stress_hydrothermique(swi_h, t_h), 3)})
+
+        # Série COURTE servie inline à la page (graphe court + timeline légère
+        # du curseur) : queue de l'historique long LAGGÉ quand il existe, pour
+        # être cohérente avec l'indice du jour et la prévision (même lag, même
+        # correction stations, même couture). La série directe calculée
+        # ci-dessus n'est qu'un repli (historique absent pour cette maille).
+        hl = hist_lag.get(mid) if hist_lag else None
+        if hl and hl.get("i") and historique and historique.get("dates"):
+            hd = historique["dates"]
+            n_ser = min(len(hd), SERIE_COURTE_JOURS)
+
+            def _hv(cle, k):
+                arr = hl.get(cle)
+                return arr[k] if arr and k < len(arr) else None
+            serie = [{"date": hd[k], "swi": _hv("w", k), "pluie_15j": _hv("p", k),
+                      "temp": _hv("t", k), "indice": _hv("i", k),
+                      "stress": _hv("s", k)}
+                     for k in range(len(hd) - n_ser, len(hd))]
 
         # dernier jour SIM LISIBLE de la maille (les lignes sans date sont
         # écartées à la source ; ceinture ici).

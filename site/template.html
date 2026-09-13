@@ -63,6 +63,14 @@
   .synth-s{margin-top:4px;color:var(--muted)}
   .synth-n{margin-top:6px;font-size:11px;color:var(--muted);font-style:italic}
   .synth b{color:#1b5e20}
+  .synth a{color:#1b5e20;text-decoration:underline dotted;cursor:pointer}
+  .synth a:hover{background:#dcebdc}
+  .synth-btn{display:inline-block;margin-top:7px;border:1px solid #9ccc9c;background:#fff;border-radius:7px;
+    padding:3px 10px;font-size:12px;cursor:pointer;color:var(--ink)}
+  .synth-btn:hover{background:#f3faf3}
+  /* Secteurs favorables (date de prévision) : pastilles numérotées ①②③ */
+  .favnum{width:24px;height:24px;border-radius:50%;background:#1e88e5;color:#fff;font-weight:800;font-size:13px;
+    display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.35);cursor:pointer}
   .pill{font-size:11px;padding:2px 8px;border-radius:20px;background:#f0efe9;color:var(--muted)}
   /* Filtre essences (contrôle superposé à la carte) */
   .filtre{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:10px;
@@ -385,7 +393,7 @@ const PARAMS   = RAW.params || {};
 const DEPTS    = RAW.departements || [];        // registre : {code,nom,bbox,geom,hist}
 const DEPTDATA = RAW.dept || {};                // signal du jour par département
 const LOADED_GEOM = {};                          // code -> true quand geom chargée
-let   HIST_STATE  = "absent";                    // absent | chargement | pret
+let   HIST_STATE  = "absent";                    // absent | leger | chargement | pret
 
 const D = {
   genere_le:       RAW.genere_le,
@@ -454,6 +462,53 @@ map.createPane("foret"); map.getPane("foret").style.zIndex=350;
 // le canvas peint tout sur une seule surface et reste fluide, même sur mobile.
 // Le survol/clic par parcelle reste natif (Leaflet fait le test point-in-polygone).
 const foretRenderer = L.canvas({pane:"foret", padding:0.5});
+// --- Secteurs favorables à une DATE DE PRÉVISION -----------------------------
+// Quand le curseur est sur un jour futur, on matérialise les mailles dont
+// l'indice prévu ≥ SEUIL_FAV : contour bleu pointillé (emprise des parcelles
+// de la maille = ~8 km SAFRAN, on ne prétend pas désigner un bois précis) et
+// pastilles ①②③ sur les trois meilleures. Pane au-dessus des forêts, sous les
+// marqueurs.
+map.createPane("fav"); map.getPane("fav").style.zIndex=450;
+const favLayer = L.layerGroup().addTo(map);
+const SEUIL_FAV = 55;                       // même seuil que la synthèse fillSynth
+let MAILLE_BBOX = {};                       // mid -> [lonMin, latMin, lonMax, latMax]
+function calcMailleBbox(){
+  MAILLE_BBOX={};
+  const walk=(c,b)=>{ if(typeof c[0]==="number"){ if(c[0]<b[0])b[0]=c[0]; if(c[1]<b[1])b[1]=c[1];
+      if(c[0]>b[2])b[2]=c[0]; if(c[1]>b[3])b[3]=c[1]; return; } for(let i=0;i<c.length;i++) walk(c[i],b); };
+  (D.geojson.features||[]).forEach(f=>{
+    const mid=f.properties&&f.properties.maille_id; if(!mid||!f.geometry) return;
+    const b=MAILLE_BBOX[mid]||(MAILLE_BBOX[mid]=[Infinity,Infinity,-Infinity,-Infinity]);
+    try{ walk(f.geometry.coordinates,b); }catch(e){}
+  });
+}
+function majSecteursFavorables(){
+  favLayer.clearLayers();
+  if(!H || HCUR<0 || HCUR<=TODAY_IDX) return;           // seulement sur une date future
+  const k=HCUR, arr=[];
+  for(const mid in H.mailles){ const v=H.mailles[mid].i?H.mailles[mid].i[k]:null;
+    if(v!=null && v>=SEUIL_FAV && D.mailles[mid]) arr.push({mid,v}); }
+  arr.sort((a,b)=>b.v-a.v);
+  arr.forEach((z,i)=>{
+    const m=D.mailles[z.mid]||{}, bb=MAILLE_BBOX[z.mid];
+    const st={pane:"fav",color:COL_FUTUR,weight:i<3?2.4:1.3,dashArray:"6 4",fill:false,interactive:false};
+    if(bb && isFinite(bb[0])) favLayer.addLayer(L.rectangle([[bb[1],bb[0]],[bb[3],bb[2]]],st));
+    else if(m.lat!=null && m.lon!=null) favLayer.addLayer(L.circle([m.lat,m.lon],Object.assign({radius:4000},st)));
+    if(i<3 && m.lat!=null && m.lon!=null){
+      const mk=L.marker([m.lat,m.lon],{icon:L.divIcon({className:"",html:`<div class="favnum">${i+1}</div>`,
+        iconSize:[24,24],iconAnchor:[12,12]}), zIndexOffset:1000});
+      mk.bindTooltip(`n°${i+1} · indice ${z.v} · ${Math.round(m.altitude||0)} m ${m.geologie_classe||""}`,{direction:"top"});
+      mk.on("click",()=>{ deselectLayer(); ouvrirDetail(z.mid); });
+      favLayer.addLayer(mk);
+    }
+  });
+}
+// Centre la carte sur une maille (secteur) et ouvre sa fiche.
+function allerAuSecteur(mid){
+  const m=D.mailles[mid]; if(!m) return;
+  if(m.lat!=null && m.lon!=null){ try{ map.setView([m.lat,m.lon], Math.max(map.getZoom(),11)); }catch(e){} }
+  deselectLayer(); ouvrirDetail(mid);
+}
 // Cadrage initial : union des emprises des départements du registre.
 (function(){ const bb=L.latLngBounds([]);
   DEPTS.forEach(d=>{ if(d.bbox) bb.extend(L.latLngBounds([d.bbox[0][0],d.bbox[0][1]],[d.bbox[1][0],d.bbox[1][1]])); });
@@ -646,18 +701,49 @@ function finaliserHistorique(histParDept){
     if(!dates) dates=h.dates.slice();
     Object.assign(M, h.mailles||{});
   }
-  if(!dates){ return; }
-  H={dates:dates, mailles:M};
+  if(!dates){ return false; }
+  assemblerH(dates, M);
+  return true;
+}
+// Timeline LÉGÈRE, sans téléchargement : la série courte de chaque maille
+// (déjà inline, ~30 j, même lag que l'indice du jour) + la prévision inline.
+// Permet au curseur — et donc à la carte à une date de PRÉVISION — de marcher
+// dès l'ouverture ; « Historique complet » remplace ensuite H par le rejeu long.
+function finaliserHistoriqueLeger(){
+  if(H) return false;
+  const set=new Set();
+  for(const mid in D.mailles) (D.mailles[mid].serie||[]).forEach(x=>{ if(x&&x.date) set.add(x.date); });
+  const dates=[...set].sort();
+  const aPrev = !!(D.prevision && D.prevision.dates && D.prevision.dates.length);
+  if(!dates.length && !aPrev) return false;
+  const pos={}; dates.forEach((d,i)=>pos[d]=i);
+  const M={}, nn=(v)=>(v==null?null:v);
+  for(const mid in D.mailles){
+    const sr=D.mailles[mid].serie||[]; if(!sr.length) continue;
+    const m={i:dates.map(()=>null),s:dates.map(()=>null),w:dates.map(()=>null),p:dates.map(()=>null),t:dates.map(()=>null)};
+    sr.forEach(x=>{ const k=pos[x.date]; if(k==null) return;
+      m.i[k]=nn(x.indice); m.s[k]=nn(x.stress); m.w[k]=nn(x.swi); m.p[k]=nn(x.pluie_15j); m.t[k]=nn(x.temp); });
+    M[mid]=m;
+  }
+  assemblerH(dates, M);
+  HIST_STATE="leger";
+  return true;
+}
+// Assemble H = passé (dates, mailles) + prévision inline, et calcule la timeline.
+function assemblerH(dates, M){
+  H={dates:dates.slice(), mailles:M};
   FUTURESTART=H.dates.length;
   if(D.prevision && D.prevision.dates && D.prevision.dates.length){
-    const P=D.prevision;
+    const P=D.prevision, PM=P.mailles||{};
     H.dates=H.dates.concat(P.dates);
-    for(const mid in H.mailles){
-      const pm=P.mailles[mid];
+    const ids=new Set(Object.keys(H.mailles)); Object.keys(PM).forEach(x=>ids.add(x));
+    ids.forEach(mid=>{
+      const hm=H.mailles[mid]||(H.mailles[mid]={}); const pm=PM[mid];
       ["i","s","w","p","t"].forEach(c=>{
-        H.mailles[mid][c]=(H.mailles[mid][c]||[]).concat(pm?pm[c]:P.dates.map(()=>null));
+        const passe=hm[c]||Array(FUTURESTART).fill(null);
+        hm[c]=passe.concat(pm&&pm[c]?pm[c]:P.dates.map(()=>null));
       });
-    }
+    });
   }
   HDATES=H.dates;
   TODAY_IDX=FUTURESTART;
@@ -763,6 +849,7 @@ function construireCouches(){
     Object.values(layersByGroup).forEach(l=>{try{bnds.extend(l.getBounds());}catch(e){}});
     try{ if(bnds.isValid()){ map.fitBounds(bnds,{padding:[10,10]}); _fitFait=true; } }catch(e){}
   }
+  calcMailleBbox();
   ajouterFiltreEssences();
 }
 function ajouterFiltreEssences(){
@@ -851,6 +938,7 @@ function appliquer(){
     if(mm) mm.textContent=(moy!=null?moy:"—")+" / 100";
   }
   majLuneBox();
+  try{ majSecteursFavorables(); }catch(e){}
   if(majStationsHook){ try{ majStationsHook(); }catch(e){} }
   rafraichirVolet();
 }
@@ -876,24 +964,29 @@ function ajouterRejeuPlaceholder(){
 async function chargerHistorique(){
   if(HIST_STATE==="pret") return true;
   if(HIST_STATE==="chargement") return false;
-  HIST_STATE="chargement";
+  const etatAvant=HIST_STATE; HIST_STATE="chargement";
+  const dcur=(H && HCUR>=0)? HDATES[HCUR] : null;       // date courante à conserver
   const parDept={};
   await Promise.all(DEPTS.filter(d=>d.hist).map(async d=>{
     try{ const r=await fetch(d.hist); if(r.ok) parDept[d.code]=await r.json(); }catch(e){}
   }));
-  finaliserHistorique(parDept);
-  if(H){
+  const ok=finaliserHistorique(parDept);                 // ne touche H qu'en cas de succès
+  if(ok){
     HIST_STATE="pret";
     if(rejeuPlaceholder){ try{map.removeControl(rejeuPlaceholder);}catch(e){} rejeuPlaceholder=null; }
-    activerRejeu();
+    activerRejeu();                                     // reconstruit le curseur (nouvelle étendue)
+    if(dcur && allerADate) allerADate(dcur);
   } else {
-    HIST_STATE="absent";
+    HIST_STATE = etatAvant==="leger" ? "leger" : "absent";
     const b=document.getElementById("rj-load"); if(b){ b.disabled=false; b.textContent="Réessayer"; }
   }
-  return !!H;
+  return ok;
 }
+let rejeuCtrl=null;
 function activerRejeu(){
   if(!(H && HDATES.length>1)) return;
+  if(rejeuCtrl){ try{map.removeControl(rejeuCtrl);}catch(e){} rejeuCtrl=null; }
+  const complet = HIST_STATE==="pret" || !DEPTS.some(d=>d.hist);
   // index de la date la plus proche d'une chaîne "YYYY-MM-DD".
   // (comparaison en JOURS : "2026-09-07"-"2026-09-06" sur des chaînes vaut NaN,
   //  ce qui rendait la recherche non symétrique et pouvait bloquer sur un trou).
@@ -923,12 +1016,15 @@ function activerRejeu(){
        <div class="rejeu-row2">
          <input type="date" id="rj-input" min="${HDATES[0]}" max="${HDATES[HDATES.length-1]}" value="${HDATES[TODAY_IDX]}">
        </div>
-       <div class="note"><b style="color:${COL_AUJ}">vert</b> = aujourd'hui · <b style="color:${COL_PASSE}">magenta</b> = passé · <b style="color:${COL_FUTUR}">bleu</b> = prévision. Piste « à venir » = 15 prochains jours (échelle large).</div>`;
+       ${complet?"":`<div class="rejeu-row"><button id="rj-load" type="button" title="Remonter jusqu'en 2022 (~3 Mo/dépt)">Historique complet…</button></div>`}
+       <div class="note"><b style="color:${COL_AUJ}">vert</b> = aujourd'hui · <b style="color:${COL_PASSE}">magenta</b> = passé · <b style="color:${COL_FUTUR}">bleu</b> = prévision. ${complet?"Piste « à venir » = 15 prochains jours (échelle large).":"Passé = "+TODAY_IDX+" derniers jours ; « Historique complet » remonte à 2022."}<br>Sur une date de prévision, les mailles favorables (≥ ${SEUIL_FAV}) sont cerclées en bleu, les 3 meilleures numérotées.</div>`;
     L.DomEvent.disableClickPropagation(div);
     L.DomEvent.disableScrollPropagation(div);
     return div;
   };
-  rc.addTo(map);
+  rc.addTo(map); rejeuCtrl=rc;
+  const bl=document.getElementById("rj-load");
+  if(bl) bl.addEventListener("click",()=>{ bl.disabled=true; bl.textContent="Chargement…"; chargerHistorique(); });
   const rgPast=document.getElementById("rj-past"), rgFut=document.getElementById("rj-fut"),
         lblD=document.getElementById("rj-date"), dateIn=document.getElementById("rj-input"),
         btnPlay=document.getElementById("rj-play");
@@ -1243,12 +1339,24 @@ function fillSynth(){
   arr.sort((x,y)=>y.indice-x.indice); const top=arr.slice(0,3);
   const lag=(top[0]&&D.mailles[top[0].mid]&&D.mailles[top[0].mid].lag_jours)||12;
   const f1=addDays(PD[a],lag), f2=addDays(PD[b],lag);
-  const secteurs=top.map(z=>Math.round(z.altitude||0)+" m "+(z.geologie||"")).join(" · ");
+  const NUM=["①","②","③"];
+  const lien=(d)=>`<a data-goto="${d}" title="Voir la carte à cette date">${frDate(d)}</a>`;
+  const secteurs=top.map((z,i)=>`<a data-mid="${z.mid}" data-goto="${PD[peakK]}" title="Centrer la carte sur ce secteur (maille 8 km)">${NUM[i]||""} ${Math.round(z.altitude||0)} m ${z.geologie||""}</a>`).join(" · ");
   el.innerHTML=`<div class="synth-t">🍄 Prévision de sortie</div>
-    <div>Conditions favorables prévues <b>${frDate(PD[a])}${a!==b?" → "+frDate(PD[b]):""}</b> (indice jusqu'à ${peakV}).</div>
+    <div>Conditions favorables prévues <b>${lien(PD[a])}${a!==b?" → "+lien(PD[b]):""}</b> (indice jusqu'à ${peakV}).</div>
     <div>Pousse attendue ~${lag} j après → <b>${frDate(f1)}${a!==b?" → "+frDate(f2):""}</b>.</div>
     <div class="synth-s">Meilleurs secteurs : ${secteurs}.</div>
-    <div class="synth-n">Prévision météo — fiabilité décroissante au-delà de ~5–7 j. SWI projeté (bilan hydrique).</div>`;
+    <button type="button" class="synth-btn" data-goto="${PD[peakK]}">🗺️ Voir les secteurs sur la carte (${frDate(PD[peakK])})</button>
+    <div class="synth-n">Prévision météo — fiabilité décroissante au-delà de ~5–7 j. SWI projeté (bilan hydrique). Un secteur = une maille SAFRAN de 8 km, pas un bois précis.</div>`;
+  // Dates et secteurs cliquables : placer le curseur sur la date (la carte se
+  // recolore, le calque « secteurs favorables » apparaît), puis centrer sur la maille.
+  el.querySelectorAll("[data-goto]").forEach(n=>n.addEventListener("click",(ev)=>{
+    ev.preventDefault();
+    const d=n.getAttribute("data-goto"), mid=n.getAttribute("data-mid");
+    if(allerADate) allerADate(d);
+    if(mid) allerAuSecteur(mid);
+    if(typeof IS_MOBILE!=="undefined" && IS_MOBILE && !mid){ try{ document.getElementById("map").scrollIntoView({behavior:"smooth"}); }catch(e){} }
+  }));
 }
 
 // Vue par défaut : synthèse prévision + top zones (date-aware) + légende.
@@ -2219,7 +2327,10 @@ try{
 // ============================================================================
 map.on("moveend", chargerGeomVisibles);
 chargerGeomVisibles();
-ajouterRejeuPlaceholder();
+// Curseur temporel : d'emblée sur la timeline LÉGÈRE (séries inline + prévision) ;
+// sinon placeholder « Charger l'historique » (page sans série ni prévision).
+try{ finaliserHistoriqueLeger(); }catch(e){ H=null; HDATES=[]; }
+if(H && HDATES.length>1) activerRejeu(); else ajouterRejeuPlaceholder();
 
 // ============================================================================
 // MODE TERRAIN (PWA) : service worker + bandeau hors-ligne + « Préparer ma sortie ».

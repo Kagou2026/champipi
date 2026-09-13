@@ -14,6 +14,7 @@ les propriétés lat/lon brutes.
 
 Accès libre (licence ouverte), sans clé.
 """
+from datetime import date
 import requests
 from shapely.geometry import shape, mapping
 from shapely.ops import transform as shp_transform
@@ -51,8 +52,19 @@ def fetch_sim_features(bbox_l93=LOZERE_BBOX_L93, timeout=120):
 
 
 def _clean_date(d):
-    """'2026-08-08Z' -> '2026-08-08'."""
-    return (d or "").replace("Z", "").strip()
+    """'2026-08-08Z' -> '2026-08-08' ; None ou chaîne non datée -> None.
+
+    Le WFS sert parfois des lignes dont la date est nulle (point du jour mal
+    ingéré en amont, vu le 12/09/2026) : renvoyer '' les laissait entrer dans
+    l'historique et faisait planter date.fromisoformat('') à l'étape 4."""
+    d = (d or "").replace("Z", "").strip()
+    if len(d) < 10:
+        return None
+    try:
+        date.fromisoformat(d[:10])
+    except ValueError:
+        return None
+    return d[:10]
 
 
 def organiser_par_maille(features):
@@ -65,8 +77,13 @@ def organiser_par_maille(features):
     }
     """
     mailles = {}
+    sans_date = 0
     for f in features:
         p = f.get("properties", {})
+        d = _clean_date(p.get("date"))
+        if d is None:
+            sans_date += 1          # ligne inexploitable (pas de date) -> ignorée
+            continue
         mid = str(p.get("id_maille_historique"))
         if mid not in mailles:
             geom_wgs, centroid = _l93_to_wgs84_geom(f.get("geometry"))
@@ -77,7 +94,7 @@ def organiser_par_maille(features):
                 "historique": [],
             }
         mailles[mid]["historique"].append({
-            "date": _clean_date(p.get("date")),
+            "date": d,
             "swi": p.get("swi_courant"),
             "anomalie_swi": p.get("anomalie_swi"),
             "etr": p.get("etr_courante"),
@@ -85,6 +102,8 @@ def organiser_par_maille(features):
         })
     for m in mailles.values():
         m["historique"].sort(key=lambda h: h["date"])
+    if sans_date:
+        print(f"    ⚠ {sans_date} ligne(s) SIM sans date ignorée(s)")
     return mailles
 
 

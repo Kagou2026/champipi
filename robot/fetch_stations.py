@@ -24,6 +24,7 @@ import io
 from datetime import date, timedelta
 
 import requests
+from fraicheur import parse_iso, iso_ymd
 
 from config import (STATION_DEPTS, STATION_CSV_URLS, STATION_FENETRE_JOURS,
                     STATION_SERIE_JOURS, STATION_FRESH_OK_J, STATION_FRESH_MUET_J,
@@ -63,9 +64,9 @@ def fetch_stations(depts=None, fenetre=None, timeout=120):
                 continue
             texte = gzip.decompress(r.content).decode("latin-1")
             for row in csv.DictReader(io.StringIO(texte), delimiter=";"):
-                jour = row.get("AAAAMMJJ", "")
-                if not jour or jour < limite:
-                    continue
+                jour = (row.get("AAAAMMJJ") or "").strip()
+                if iso_ymd(jour) is None or jour < limite:
+                    continue          # date absente/corrompue -> ligne ignorée
                 num = row.get("NUM_POSTE")
                 try:
                     lat = float(row["LAT"]); lon = float(row["LON"])
@@ -100,7 +101,9 @@ def cumul_15j(station, fin_iso, min_jours=10):
     extrapole à la fenêtre pleine (somme × 15 / n). Sinon None (station trop
     lacunaire pour être fiable ici).
     """
-    fin = date.fromisoformat(fin_iso)
+    fin = parse_iso(fin_iso)
+    if fin is None:
+        return None            # date de fin illisible -> pas d'estimation
     vals = []
     for k in range(15):
         j = (fin - timedelta(days=k)).strftime("%Y%m%d")
@@ -119,7 +122,9 @@ def serie_pluie(station, fin_iso, jours=None):
     chronologique, jour courant en dernier. Purement pour l'AFFICHAGE : le cumul
     qui sert à la correction reste calculé sur 15 j (cf. cumul_15j)."""
     jours = jours or STATION_SERIE_JOURS
-    fin = date.fromisoformat(fin_iso)
+    fin = parse_iso(fin_iso)
+    if fin is None:
+        return []
     out = []
     for k in range(jours - 1, -1, -1):
         d = fin - timedelta(days=k)
@@ -139,7 +144,9 @@ def serie_temp(station, fin_iso, jours=None):
     chronologique (jour courant en dernier). Chaque valeur manquante = None. Une
     station sans température renvoie une série de (date, None, None, None)."""
     jours = jours or STATION_SERIE_JOURS
-    fin = date.fromisoformat(fin_iso)
+    fin = parse_iso(fin_iso)
+    if fin is None:
+        return []
     t = station.get("t", {})
     out = []
     for k in range(jours - 1, -1, -1):
@@ -167,18 +174,21 @@ def etat_fraicheur(station, frontier_iso, fenetre=None):
     NB : "muet" est un signal de FIABILITÉ des données, pas un diagnostic
     officiel de panne (impossible à établir depuis cette seule source)."""
     fenetre = fenetre or STATION_SERIE_JOURS
-    fin = date.fromisoformat(frontier_iso)
+    fin = parse_iso(frontier_iso)
+    if fin is None or not station["rr"]:
+        return {"dernier": None, "retard_j": None, "jours": 0,
+                "fenetre": fenetre, "etat": "muet"}
     n = 0
     for k in range(fenetre):
         j = (fin - timedelta(days=k)).strftime("%Y%m%d")
         if station["rr"].get(j) is not None:
             n += 1
-    if not station["rr"]:
-        return {"dernier": None, "retard_j": None, "jours": 0,
-                "fenetre": fenetre, "etat": "muet"}
     dj = max(station["rr"])                      # AAAAMMJJ le plus récent renseigné
-    dernier = f"{dj[:4]}-{dj[4:6]}-{dj[6:]}"
-    retard = (fin - date.fromisoformat(dernier)).days
+    dernier = iso_ymd(dj)
+    if dernier is None:                          # clé de série corrompue
+        return {"dernier": None, "retard_j": None, "jours": n,
+                "fenetre": fenetre, "etat": "muet"}
+    retard = (fin - parse_iso(dernier)).days
     couv = n / fenetre if fenetre else 0.0
     if retard > STATION_FRESH_MUET_J:
         etat = "muet"

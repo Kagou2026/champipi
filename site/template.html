@@ -298,6 +298,18 @@
   .prep .bar i{display:block;height:100%;width:0;background:#2e7d32;transition:width .2s}
   .prep .etat{margin-top:5px;color:var(--muted);min-height:14px}
   .prep .note{margin-top:6px;font-size:11px;color:var(--muted);font-style:italic}
+  /* --- Fraîcheur des données : encadré d'avertissement + marque sur la date --- */
+  .fraich{display:none;position:relative;margin:0 0 10px;padding:8px 26px 8px 10px;border-radius:8px;
+    font-size:12px;line-height:1.4;border:1px solid #f0c27b;background:#fff6e5;color:#6b3d00}
+  .fraich.on{display:block}
+  .fraich.bad{border-color:#e39a9a;background:#fdecec;color:#7a1f1f}
+  .fraich b{display:block;margin-bottom:3px}
+  .fraich ul{margin:2px 0 0 14px;padding:0}
+  .fraich li{margin:1px 0}
+  .fraich .fx{position:absolute;top:4px;right:6px;border:none;background:none;cursor:pointer;
+    font-size:14px;color:inherit;opacity:.7;padding:2px 4px}
+  #dept-date.stale::after{content:" ⚠";color:#e65100}
+  #dept-date.stale.bad::after{color:#b71c1c}
 </style>
 </head>
 <body>
@@ -316,6 +328,7 @@
       <div class="sheet-handle" id="sheet-handle" title="Glisser pour ouvrir/fermer"></div>
       <div id="detail">
         <h2>Indice du jour</h2>
+        <div class="fraich" id="fraich-box"></div>
         <p class="hint">Cliquez une maille sur la carte pour voir son indice cèpe, ses composantes et l'évolution sur 15 jours.</p>
         <div class="metrics">
           <div class="metric"><div class="k">Moyenne 48</div><div class="v" id="m-moy">—</div></div>
@@ -2281,7 +2294,9 @@ try{
     if(v.genere_le===RAW.genere_le){
       majEnCours=false;
       try{ localStorage.removeItem("champipi_maj_tentee"); }catch(_){}
-      majShow("ok","✅ À jour — données du "+dateDonnees(v), 4000);
+      if(v.fraicheur && v.fraicheur!=="ok")
+        majShow("warn","⚠ Dernière génération, mais des sources sont en retard — données du "+dateDonnees(v), 7000);
+      else majShow("ok","✅ À jour — données du "+dateDonnees(v), 4000);
       return;
     }
     // Une génération plus récente est en ligne.
@@ -2470,6 +2485,59 @@ try{
     }
   });
 }catch(e){ /* le mode terrain ne doit JAMAIS empêcher la carte de s'afficher */ }
+
+// ============================================================================
+// FRAÎCHEUR DES DONNÉES : prévenir quand la carte ne reflète plus la météo.
+// Deux regards complémentaires :
+//   1. côté robot (dept.fraicheur) : chaque SOURCE est-elle à jour au moment de
+//      la génération (SIM, pluviomètres, Open-Meteo, historique, prévision) ;
+//   2. côté page : l'ÂGE de la donnée affichée par rapport à l'horloge du
+//      téléphone — indispensable pour une copie servie du cache (PWA) ou un
+//      robot qui n'a pas tourné depuis plusieurs jours (action GitHub en panne).
+// Non-critique : try/catch, en toute fin de script.
+// ============================================================================
+try{
+  const FR_RETARD=3, FR_PERIME=6;          // âge (jours) de la donnée SIM affichée
+  const box=document.getElementById("fraich-box"), dd=document.getElementById("dept-date");
+  const jours=(iso)=>{ if(!iso) return null;
+    const a=new Date(iso+"T12:00:00"), b=new Date(aujourdhui()+"T12:00:00");
+    return Math.round((b-a)/86400000); };
+  function evaluerFraicheur(){
+    const msgs=[]; let niv="ok";
+    const monte=(n)=>{ const o={ok:0,retard:1,perime:2}; if(o[n]>o[niv]) niv=n; };
+    // 1. verdict du robot, tous départements (messages dédoublonnés)
+    for(const code in DEPTDATA){
+      const f=(DEPTDATA[code]||{}).fraicheur; if(!f) continue;
+      if(f.etat==="perime"||f.etat==="absent") monte("perime"); else if(f.etat==="retard") monte("retard");
+      (f.avertissements||[]).forEach(m=>{ if(!msgs.includes(m)) msgs.push(m); });
+    }
+    // 2. âge de la donnée affichée (horloge locale)
+    const age=jours(D.date_donnees);
+    if(age===null){ monte("perime"); msgs.unshift("Aucune date de données : la carte est à prendre avec réserve."); }
+    else if(age>FR_PERIME){ monte("perime"); msgs.unshift("La carte date du "+frDate(D.date_donnees)+" ("+age+" j) : elle ne reflète plus la météo actuelle — la mise à jour automatique n'a probablement pas tourné."); }
+    else if(age>FR_RETARD){ monte("retard"); msgs.unshift("La carte date du "+frDate(D.date_donnees)+" ("+age+" j de retard)."); }
+    return {niv, msgs};
+  }
+  function afficherFraicheur(){
+    const {niv,msgs}=evaluerFraicheur();
+    if(dd){ dd.classList.toggle("stale", niv!=="ok"); dd.classList.toggle("bad", niv==="perime");
+      dd.title = niv==="ok" ? "" : msgs.join("\n"); }
+    if(!box) return;
+    if(niv==="ok" || !msgs.length){ box.className="fraich"; box.innerHTML=""; return; }
+    // l'utilisateur peut replier l'encadré pour cette génération (pas pour toujours)
+    let cache=null; try{ cache=sessionStorage.getItem("champipi_fraich_ferme"); }catch(_){}
+    if(cache===RAW.genere_le){ box.className="fraich"; return; }
+    box.className="fraich on"+(niv==="perime"?" bad":"");
+    box.innerHTML="<b>"+(niv==="perime"?"⛔ Données périmées":"⚠ Données en retard")+"</b><ul>"
+      +msgs.map(m=>"<li>"+m.replace(/&/g,"&amp;").replace(/</g,"&lt;")+"</li>").join("")+"</ul>"
+      +"<button class='fx' title='Masquer'>✕</button>";
+    box.querySelector(".fx").onclick=()=>{ box.className="fraich";
+      try{ sessionStorage.setItem("champipi_fraich_ferme", RAW.genere_le); }catch(_){} };
+  }
+  afficherFraicheur();
+  // l'âge change à minuit ou après une longue veille de la PWA : on réévalue
+  document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") afficherFraicheur(); });
+}catch(e){ /* jamais bloquant */ }
 </script>
 </body>
 </html>

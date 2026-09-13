@@ -14,13 +14,13 @@ les propriétés lat/lon brutes.
 
 Accès libre (licence ouverte), sans clé.
 """
-from datetime import date
 import requests
 from shapely.geometry import shape, mapping
 from shapely.ops import transform as shp_transform
 from pyproj import Transformer
 
 from config import SIM_WFS_URL, SIM_WFS_TYPENAME, LOZERE_BBOX_L93
+from fraicheur import parse_iso
 
 # Transformateur Lambert-93 (EPSG:2154) -> WGS84 (EPSG:4326), ordre lon/lat.
 _TO_WGS84 = Transformer.from_crs(2154, 4326, always_xy=True)
@@ -57,14 +57,8 @@ def _clean_date(d):
     Le WFS sert parfois des lignes dont la date est nulle (point du jour mal
     ingéré en amont, vu le 12/09/2026) : renvoyer '' les laissait entrer dans
     l'historique et faisait planter date.fromisoformat('') à l'étape 4."""
-    d = (d or "").replace("Z", "").strip()
-    if len(d) < 10:
-        return None
-    try:
-        date.fromisoformat(d[:10])
-    except ValueError:
-        return None
-    return d[:10]
+    dd = parse_iso(d)
+    return dd.isoformat() if dd else None
 
 
 def organiser_par_maille(features):

@@ -40,6 +40,7 @@ from stations import (corrige, choc_station, preparer_hist,
 from versant import (stress_hydrothermique, indice_module,
                      coolness, indice_parcelle)
 from backfill_hist import historique_a_jour
+from fraicheur import parse_iso, iso_ok, iso_ymd, evaluer as evaluer_fraicheur
 
 
 def charger_terrain(path=TERRAIN_FILE):
@@ -95,9 +96,11 @@ def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None)
     la timeline), à défaut sur le SWI live SIM.
     Renvoie {dates, mailles:{mid:{i,s,w,p,t}}} (mêmes clés que l'historique) ou None."""
     from datetime import date as _date
+    if not iso_ok(hist_fin):
+        return None                    # pas d'ancre datée -> pas de prévision
     futures = set()
     for pv in prev_list:
-        futures.update(d for d in pv if d > hist_fin)
+        futures.update(d for d in pv if iso_ok(d) and d > hist_fin)
     dates = sorted(futures)[:PREV_HORIZON_JOURS]
     if not dates:
         return None
@@ -113,7 +116,7 @@ def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None)
         # ancre SWI : dernier SWI SAFRAN de l'historique (continuité) sinon live.
         w_hist = hist_m.get(mid, {}).get("w") if hist_m else None
         swi = (w_hist[-1] if w_hist and w_hist[-1] is not None else m.get("swi"))
-        pvdates = sorted(pv)
+        pvdates = sorted(d for d in pv if iso_ok(d))
 
         def _om_cumul15(day_iso):
             """Cumul de pluie Open-Meteo sur la fenêtre 15 j finissant à day_iso."""
@@ -204,9 +207,12 @@ def corrige_historique(historique, terrain, coef_par_maille, stations, jours=15,
     dates = historique.get("dates") or []
     if not dates:
         return
-    fin = _d.fromisoformat(dates[-1])
+    fin = parse_iso(dates[-1])
+    if fin is None:
+        return
     recents = [k for k, dt in enumerate(dates)
-               if (fin - _d.fromisoformat(dt)).days <= jours
+               if parse_iso(dt) is not None
+               and (fin - parse_iso(dt)).days <= jours
                and (apres is None or k > apres)]
     cellinfo = {c["maille_id"]: c for c in terrain}
     for mid, arr in historique["mailles"].items():
@@ -267,10 +273,27 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
 
     print(f"[{code}] 2/5 Données SIM...")
     sim = organiser_par_maille(fetch_sim_features(bbox_l93=ctx["bbox_l93"]))
+    if not sim:
+        # Sans SIM il n'y a ni SWI ni pluie : rien à calculer. Erreur explicite
+        # (plutôt qu'une page vide) ; le département est sauté par main().
+        raise RuntimeError("WFS SIM : aucune maille datée sur l'emprise")
+    sim_fin = max((h["date"] for m in sim.values() for h in m["historique"]),
+                  default=None)
+    print(f"    {len(sim)} mailles SIM, dernier jour {sim_fin}")
 
     print(f"[{code}] 3/5 Températures (Open-Meteo)...")
     coords = [(c["lat"], c["lon"]) for c in terrain]
-    temps = temperatures_par_maille(coords)
+    # Dégradation propre : Open-Meteo injoignable = indice calculé SANS la
+    # composante température (sous-score neutralisé, cf. calcul_indice) et
+    # avertissement de fraîcheur, plutôt que département perdu.
+    try:
+        temps = temperatures_par_maille(coords)
+    except Exception as e:
+        temps = []
+        print(f"    ⚠ températures indisponibles ({type(e).__name__}: {e}) — "
+              f"indice calculé sans température")
+    temp_fin = max((d for t in temps for d, v in (t.get("par_date") or {}).items()
+                    if v is not None and iso_ok(d)), default=None)
 
     # Coefs terrain par maille (géologie × forêt × essence), connus d'avance :
     # nécessaires pour corriger la queue de l'historique long AVANT la boucle.
@@ -339,6 +362,8 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
         # que le curseur recolore chaque face de forêt (versant) par jour.
         serie = []
         for h in hist_sim:
+            if not iso_ok(h.get("date")):
+                continue               # ligne SIM sans date lisible : ignorée
             t_h = temp_du(h["date"])
             # correction locale par les stations (SWI + pluie 15 j)
             swi_h, p_h, _, _ = corrige(h["swi"], h["pluie_15j"],
@@ -350,7 +375,9 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
                           "indice": ind_h,
                           "stress": round(stress_hydrothermique(swi_h, t_h), 3)})
 
-        dernier = hist_sim[-1] if hist_sim else {}
+        # dernier jour SIM LISIBLE de la maille (les lignes sans date sont
+        # écartées à la source ; ceinture ici).
+        dernier = next((h for h in reversed(hist_sim) if iso_ok(h.get("date"))), {})
         temp = temp_du(dernier.get("date"))   # température du jour courant
         # Correction locale du jour courant : swi_j/pluie_j corrigés, plus les
         # valeurs SAFRAN brutes et la confiance α (transparence dans la fiche).
@@ -527,13 +554,16 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
     # Sources mêmes que la correction ; on expose leur cumul et leur série.
     stations_payload = []
     stations_date = None
+    # front du réseau (jour le plus récent publié), même sans calque : sert à
+    # la fraîcheur.
+    jours_dispo = set()
+    for s in (stations or []):
+        jours_dispo.update(s["rr"])
+    stations_fin = max((iso for iso in (iso_ymd(j) for j in jours_dispo) if iso),
+                       default=None)
     if stations and emettre_stations:
-        jours_dispo = set()
-        for s in stations:
-            jours_dispo.update(s["rr"])
-        if jours_dispo:
-            fin_st = max(jours_dispo)
-            stations_date = f"{fin_st[:4]}-{fin_st[4:6]}-{fin_st[6:]}"
+        if stations_fin:
+            stations_date = stations_fin
             for s in stations:
                 c15 = cumul_15j(s, stations_date)
                 et = etat_fraicheur(s, stations_date)
@@ -565,9 +595,23 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
                     "a_temp": a_temp, "temp_serie": temp_serie, "choc": choc,
                 })
 
+    # FRAÎCHEUR : chaque source est-elle à jour ? (log + page). Cf. fraicheur.py.
+    fraicheur = evaluer_fraicheur({
+        "sim": sim_fin or date_donnees or None,
+        "stations": stations_fin,
+        "historique": historique.get("fin") if historique else None,
+        "temp": temp_fin,
+        "prevision": bool(prevision),
+    })
+    for msg in fraicheur["avertissements"]:
+        print(f"    ⚠ fraîcheur : {msg}")
+    if fraicheur["etat"] == "ok":
+        print("    fraîcheur : toutes les sources sont à jour")
+
     payload = {
         "genere_le": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M"),
         "date_donnees": date_donnees,
+        "fraicheur": fraicheur,
         "moyenne_departement": moyenne,
         "niveau_departement": niveau(moyenne),
         "lag_indicatif": LAG_JOURS_PLAINE,

@@ -18,6 +18,7 @@ from config import (STATION_IDW_PUISSANCE, STATION_ALT_ECHELLE_M,
                     STATION_CHOC_JOURS, STATION_CHOC_SCORE_MIN, GEL_SEUIL_C,
                     PLUIE_15J_MIN, CHOC_FENETRE_RECENTE)
 from fetch_stations import cumul_15j, serie_temp
+from fraicheur import iso_ok, parse_iso
 from compute_index import (refroidissement, score_choc, score_temperature,
                            indices_lagues)
 from versant import stress_hydrothermique
@@ -73,8 +74,8 @@ def corrige(swi, p15, lat, lon, alti, stations, fin_iso):
       pas ingéré doit humidifier le sol ; on ne l'assèche pas sur un simple écart
       (conservateur). Poussée bornée par SWI_NUDGE_MAX.
     """
-    if not stations or p15 is None:
-        return swi, p15, 0.0, None
+    if not stations or p15 is None or not iso_ok(fin_iso):
+        return swi, p15, 0.0, None      # date illisible -> SAFRAN inchangé
     est, alpha, _ = estime_cumul15j(lat, lon, alti, stations, fin_iso)
     if est is None or alpha <= 0:
         return swi, p15, 0.0, est
@@ -263,9 +264,13 @@ def corrige_historique_complet(historique, terrain, coef_par_maille, prep):
     dates = historique.get("dates") or []
     if not dates:
         return 0, -1
-    debut = _d.fromisoformat(prep["debut"])
+    debut = parse_iso(prep.get("debut"))
+    if debut is None:
+        return 0, -1
     # index de chaque date de l'historique dans les séries de l'archive stations
-    idx_arch = [(_d.fromisoformat(dt) - debut).days for dt in dates]
+    # (date illisible -> -1 : jour laissé tel quel, jamais de plantage)
+    idx_arch = [((parse_iso(dt) - debut).days if parse_iso(dt) else -1)
+                for dt in dates]
     dernier = max([k for k, ks in enumerate(idx_arch) if 0 <= ks < prep["n"]],
                   default=-1)
     cellinfo = {c["maille_id"]: c for c in terrain}

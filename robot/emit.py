@@ -203,6 +203,9 @@ def decouper_departement(code, nom, payload, out_dir):
         "prevision": payload.get("prevision"),
         "stations": payload.get("stations", []),
         "stations_date": payload.get("stations_date"),
+        # fraîcheur des sources (états + avertissements FR) : la page prévient
+        # quand la carte ne reflète plus la météo du jour.
+        "fraicheur": payload.get("fraicheur"),
     }
     registre = {
         "code": code, "nom": nom, "bbox": bbox,
@@ -273,8 +276,13 @@ def ecrire_sorties(departements, template_path, out_dir, params,
     # publics). Si genere_le diffère de celui embarqué dans la page affichée,
     # la PWA sait qu'elle regarde une copie périmée et télécharge la nouvelle
     # génération (page + fichiers de données déjà en cache) avant de recharger.
+    # pire état de fraîcheur tous départements confondus (la page l'affiche au
+    # lancement même quand elle sert une copie en cache).
+    _ordre = {"ok": 0, "retard": 1, "perime": 2, "absent": 3}
+    etats = [(d.get("fraicheur") or {}).get("etat", "ok") for d in dept_data.values()]
     version = {
         "genere_le": genere_le,
+        "fraicheur": max(etats, key=lambda e: _ordre.get(e, 0)) if etats else "ok",
         "date_donnees": max((d.get("date_donnees") or "" for d in dept_data.values()),
                             default=None) or None,
         "fichiers": [u for r in registre for u in (r["geom"], r["hist"]) if u]

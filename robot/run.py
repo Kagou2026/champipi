@@ -45,6 +45,30 @@ from sim_repli import completer_sim, message_repli
 from fraicheur import parse_iso, iso_ok, iso_ymd, evaluer as evaluer_fraicheur
 
 
+def centre_geom(geom):
+    """Centre de l'emprise (lon/lat) d'un Polygon/MultiPolygon GeoJSON.
+
+    Sert à poser la pastille « meilleur coin » sur la carte : le centre de la
+    boîte englobante suffit pour un repère (une parcelle concave peut mettre le
+    point hors du bois, sans conséquence : la parcelle elle-même est surlignée
+    côté page à partir de maille_id/essence/versant/alt)."""
+    b = [180.0, 90.0, -180.0, -90.0]
+    def walk(c):
+        if isinstance(c[0], (int, float)):
+            b[0] = min(b[0], c[0]); b[1] = min(b[1], c[1])
+            b[2] = max(b[2], c[0]); b[3] = max(b[3], c[1])
+        else:
+            for x in c:
+                walk(x)
+    try:
+        walk(geom["coordinates"])
+    except Exception:
+        return None, None
+    if b[0] > b[2]:
+        return None, None
+    return round((b[1] + b[3]) / 2, 5), round((b[0] + b[2]) / 2, 5)
+
+
 def charger_terrain(path=TERRAIN_FILE):
     with open(path, encoding="utf-8") as fp:
         return json.load(fp)["cellules"]
@@ -539,11 +563,13 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
                                            "amax": o.get("amax")},
                         })
                         if ind is not None:
+                            lat_p, lon_p = centre_geom(o["geom"])
                             faces_top.append({
                                 "indice": ind, "niveau": niveau(ind),
                                 "maille_id": mid, "essence": grp,
                                 "versant": classe, "expo": o["expo"],
                                 "altitude": alt_p if alt_p is not None else cell["altitude"],
+                                "alt": alt_p, "lat": lat_p, "lon": lon_p,
                                 "geologie": cell["geologie_classe"]})
         elif par_groupe_v:
             for grp, faces in par_groupe_v.items():
@@ -556,11 +582,13 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
                                        "expo": o["expo"]},
                     })
                     if ind is not None:
+                        lat_p, lon_p = centre_geom(o["geom"])
                         faces_top.append({
                             "indice": ind, "niveau": niveau(ind),
                             "maille_id": mid, "essence": grp,
                             "versant": classe, "expo": o["expo"],
                             "altitude": cell["altitude"],
+                            "alt": None, "lat": lat_p, "lon": lon_p,
                             "geologie": cell["geologie_classe"]})
         elif foret_geom:
             par_groupe = foret_geom.get(mid)
@@ -597,9 +625,10 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
         top = [
             {"indice": p["indice"], "niveau": p["niveau"],
              "altitude": p["altitude"], "geologie": p["geologie_classe"],
-             "essence": p["essence_dominante"], "versant": None, "expo": None}
-            for p in sorted(
-                (p for mid, p in mailles.items()
+             "essence": p["essence_dominante"], "versant": None, "expo": None,
+             "maille_id": mid, "lat": p.get("lat"), "lon": p.get("lon")}
+            for mid, p in sorted(
+                ((mid, p) for mid, p in mailles.items()
                  if mid in ids_rendus and p["indice"] is not None),
                 key=lambda p: p["indice"], reverse=True)[:5]
         ]

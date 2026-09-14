@@ -72,6 +72,13 @@
   .favnum{width:24px;height:24px;border-radius:50%;background:#1e88e5;color:#fff;font-weight:800;font-size:13px;
     display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.35);cursor:pointer}
   .favnum-bas{background:#90a4ae}
+  /* Meilleurs coins du jour / du rejeu : pastilles orange ①…⑤ (une par parcelle) */
+  .favnum-jour{background:#e65100;width:26px;height:26px;font-size:14px}
+  .top .row.clic{cursor:pointer;border-radius:6px;margin:0 -4px;padding-left:4px;padding-right:4px}
+  .top .row.clic:hover{background:#f3f2ec}
+  .top .num{flex:0 0 20px;width:20px;height:20px;border-radius:50%;background:#e65100;color:#fff;
+    font-weight:800;font-size:11px;display:flex;align-items:center;justify-content:center}
+  .top .aide{font-size:11px;color:var(--muted);margin:2px 0 4px}
   .pill{font-size:11px;padding:2px 8px;border-radius:20px;background:#f0efe9;color:var(--muted)}
   /* Filtre essences (contrôle superposé à la carte) */
   .filtre{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:10px;
@@ -510,6 +517,73 @@ function majSecteursFavorables(){
       favLayer.addLayer(mk);
     }
   });
+}
+// --- Meilleurs coins (aujourd'hui / rejeu) : pastilles orange ①…⑤ ---------
+// Le volet liste les 5 meilleures PARCELLES du jour (une par maille), mais avec
+// 15 000 parcelles par département on ne les retrouve pas à l'œil. On pose donc
+// une pastille numérotée au centre de chaque parcelle (lat/lon cuits par le
+// robot dans D.top) ; cliquer la pastille ou la ligne du volet centre la carte
+// et surligne la parcelle. Sur une date de rejeu, le top est par MAILLE (centre
+// de maille, pas de parcelle). Sur une date future c'est majSecteursFavorables
+// (bleu) qui prend le relais.
+const coinsLayer = L.layerGroup().addTo(map);
+let COINS_CUR = [];                             // top affiché (pour le volet)
+function topCourant(){
+  if(HCUR<0 || !H) return (D.top||[]);
+  if(HCUR<=TODAY_IDX){
+    return computeTop(HCUR).map(z=>{ const m=D.mailles[z.mid]||{};
+      return Object.assign({}, z, {maille_id:z.mid, lat:m.lat, lon:m.lon, alt:null, versant:null}); });
+  }
+  return [];
+}
+function majCoinsDuJour(){
+  coinsLayer.clearLayers();
+  COINS_CUR = topCourant();
+  if(!COINS_CUR.length) return;
+  const dt=(HCUR<0||!H)?(D.date_donnees||aujourdhui()):HDATES[HCUR];
+  COINS_CUR.forEach((z,i)=>{
+    if(z.lat==null || z.lon==null) return;
+    const zi=avecLune(z.indice, dt);
+    const mk=L.marker([z.lat,z.lon],{pane:"fav",zIndexOffset:1100,
+      icon:L.divIcon({className:"",html:`<div class="favnum favnum-jour">${i+1}</div>`,iconSize:[26,26],iconAnchor:[13,13]})});
+    const v=z.versant && VERSANT_LBL[z.versant]?" · "+VERSANT_LBL[z.versant]:"";
+    mk.bindTooltip(`n°${i+1} · indice ${zi} · ${Math.round(z.altitude||0)} m${z.essence?" · "+(ESSLBL[z.essence]||z.essence):""}${v}`,{direction:"top"});
+    mk.on("click",()=>{ allerAuCoin(z); });
+    coinsLayer.addLayer(mk);
+  });
+}
+// Retrouve la couche Leaflet de la parcelle du top (maille + essence + versant +
+// altitude, et de préférence celle dont l'emprise contient le point).
+function trouverCoucheCoin(z){
+  const cand=[];
+  Object.values(layersByGroup).forEach(lyr=>{ try{ lyr.eachLayer(l=>{
+    const p=l.feature&&l.feature.properties; if(!p||p.maille_id!==z.maille_id) return;
+    if(z.essence && p.groupe!==z.essence) return;
+    if(z.versant && p.versant!==z.versant) return;
+    if(z.alt!=null && p.alt!=null && Math.abs(p.alt-z.alt)>0.5) return;
+    cand.push(l); }); }catch(e){} });
+  if(!cand.length) return null;
+  if(z.lat!=null && z.lon!=null){
+    const pt=L.latLng(z.lat,z.lon);
+    const c=cand.find(l=>{ try{ return l.getBounds().contains(pt); }catch(e){ return false; } });
+    if(c) return c;
+  }
+  return cand[0];
+}
+const dodo=ms=>new Promise(r=>setTimeout(r,ms));
+async function allerAuCoin(z){
+  if(z.lat!=null && z.lon!=null){ try{ map.setView([z.lat,z.lon], Math.max(map.getZoom(), z.alt!=null?13:11)); }catch(e){} }
+  // la géométrie du département se charge à la demande : on lui laisse le temps.
+  let l=null;
+  for(let t=0;t<6;t++){
+    try{ await chargerGeomVisibles(); }catch(e){}
+    l=trouverCoucheCoin(z); if(l || !_geomEnCours) break;
+    await dodo(500);
+  }
+  if(!l && z.alt!=null){ await dodo(600); l=trouverCoucheCoin(z); }
+  deselectLayer();
+  if(l){ selectLayer(l); ouvrirDetail(z.maille_id, l.feature.properties); }
+  else if(z.maille_id && D.mailles[z.maille_id]) ouvrirDetail(z.maille_id);
 }
 // Centre la carte sur une maille (secteur) et ouvre sa fiche.
 function allerAuSecteur(mid){
@@ -958,6 +1032,7 @@ function appliquer(){
   }
   majLuneBox();
   try{ majSecteursFavorables(); }catch(e){}
+  try{ majCoinsDuJour(); }catch(e){}
   if(majStationsHook){ try{ majStationsHook(); }catch(e){} }
   rafraichirVolet();
 }
@@ -1290,11 +1365,18 @@ function remplirTop(){
   if(HCUR<0 || !H){ top=D.top||[]; titre="Meilleurs coins du jour"; }
   else { top=computeTop(HCUR); titre="Meilleurs coins · "+frDate(HDATES[HCUR]); }
   const dt=(HCUR<0||!H)?(D.date_donnees||aujourdhui()):HDATES[HCUR];
-  t.innerHTML="<h2>"+titre+"</h2>"+top.map(z=>{
+  const cliquable = top.some(z=>z.lat!=null || z.maille_id || z.mid);
+  t.innerHTML="<h2>"+titre+"</h2>"+(cliquable?`<div class="aide">Pastilles orange ①…⑤ sur la carte · cliquer une ligne pour y aller.</div>`:"")+top.map((z,i)=>{
     const v=z.versant && VERSANT_LBL[z.versant]?" · "+VERSANT_LBL[z.versant]:"";
     const zi=avecLune(z.indice, dt);
-    return `<div class="row"><span class="dot" style="background:${couleur(zi)}"></span>
+    return `<div class="row${cliquable?" clic":""}" data-i="${i}"><span class="num">${i+1}</span><span class="dot" style="background:${couleur(zi)}"></span>
      <b>${zi}</b> · ${niveauLbl(zi)} <span class="pill">${Math.round(z.altitude||0)} m · ${z.geologie||""}${z.essence?" · "+(ESSLBL[z.essence]||z.essence):""}${v}</span></div>`;}).join("");
+  if(cliquable){
+    const liste=(typeof topCourant==="function")?topCourant():top;
+    t.querySelectorAll(".row.clic").forEach(r=>r.addEventListener("click",()=>{
+      const z=liste[+r.getAttribute("data-i")]; if(z) allerAuCoin(z); }));
+  }
+  try{ majCoinsDuJour(); }catch(e){}
   const mb=document.getElementById("m-best"); if(mb && top.length) mb.textContent=avecLune(top[0].indice, dt)+" / 100";
 }
 
@@ -1396,6 +1478,7 @@ function remplirDefaut(){
     + `<div class="li" style="margin-top:6px">Indice en <b>dégradé continu</b> : chaque nuance est un point d'indice — deux parcelles voisines de teinte différente n'ont pas la même évaluation.</div>`
     + `<div class="li" style="margin-top:6px">Teinte : essences <b>principales</b> pleines, secondaires atténuées, autres pâles. Filtre en haut à droite de la carte.</div>`
     + `<div class="li" style="margin-top:6px">Chaque forêt est découpée en <b>parcelles</b>, évaluées une par une selon leur <b>versant</b> (ubac frais / adret chaud) et leur <b>altitude</b> propre (plus haut = plus frais). Sol sec ou chaud → ubac et parcelles hautes favorisés ; temps froid → l'inverse. Cliquez une parcelle pour son détail.</div>`
+    + `<div class="li" style="margin-top:6px">Pastilles <b style="color:#e65100">orange ①…⑤</b> : les meilleurs coins du jour (ou de la date rejouée), une pastille par parcelle — cliquez-la, ou la ligne du volet, pour vous y rendre. Sur une date de prévision, les pastilles <b style="color:#1e88e5">bleues</b> ①②③ désignent les mailles.</div>`
     + `<div class="li" style="margin-top:6px">Le <b>rejeu</b> (en bas à droite de la carte) permet de <b>remonter dans le temps</b> sur plusieurs années : curseur, saut jour/mois, choix d'une date, ▶ animation. ⤓ revient au jour courant. Utile pour comparer l'indice à ce que tu as réellement observé en forêt.</div>`;
   }
 }

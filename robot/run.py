@@ -27,7 +27,8 @@ from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     STATION_SERIE_JOURS, STATION_FENETRE_JOURS,
                     STATION_FRESH_OK_J,
                     STATION_FRESH_MUET_J, STATION_COUV_MIN,
-                    PREV_HORIZON_JOURS, PREV_CAP_SOL_MM, SERIE_COURTE_JOURS)
+                    PREV_HORIZON_JOURS, PREV_CAP_SOL_MM, SERIE_COURTE_JOURS,
+                    PREV_T_ANCRE_JOURS, PREV_T_ANCRE_MIN, PREV_T_ANCRE_MAX)
 from fetch_sim import fetch_sim_features, organiser_par_maille
 from fetch_temp import temperatures_par_maille
 from fetch_prevision import prevision_par_maille
@@ -106,8 +107,10 @@ def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None)
     if not dates:
         return None
     hist_m = (historique or {}).get("mailles", {})
+    hist_dates = (historique or {}).get("dates") or []
     pos = {d: i for i, d in enumerate(dates)}
     out = {}
+    biais_t = {}          # mid -> biais Open-Meteo − SAFRAN appliqué (transparence/log)
     for i, cell in enumerate(terrain):
         mid = cell["maille_id"]; m = mailles.get(mid)
         pv = prev_list[i] if i < len(prev_list) else {}
@@ -144,6 +147,29 @@ def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None)
         delta_pluie = (_om_cumul15(hist_fin) - c_safran) if c_safran is not None else 0.0
         hf = _date.fromisoformat(hist_fin)
 
+        # RACCORD DE COUTURE (température) — cf. config PREV_T_ANCRE_*.
+        # Biais = moyenne(T_OM − T_SAFRAN) sur les derniers jours où les deux
+        # existent ; soustrait à toute la prévision, sans décroissance.
+        t_hist = hist_m.get(mid, {}).get("t") if hist_m else None
+        b_t = 0.0
+        if t_hist and hist_dates:
+            ecarts = []
+            for k in range(len(hist_dates) - 1, -1, -1):
+                d = hist_dates[k]
+                if d > hist_fin or k >= len(t_hist):
+                    continue
+                ts = t_hist[k]
+                to = (pv.get(d) or {}).get("temp")
+                if ts is None or to is None:
+                    continue
+                ecarts.append(to - ts)
+                if len(ecarts) >= PREV_T_ANCRE_JOURS:
+                    break
+            if len(ecarts) >= PREV_T_ANCRE_MIN:
+                b_t = sum(ecarts) / len(ecarts)
+                b_t = max(-PREV_T_ANCRE_MAX, min(PREV_T_ANCRE_MAX, b_t))
+        biais_t[mid] = round(b_t, 2)
+
         # projection du SWI jour par jour au-delà de l'ancre (hist_fin)
         swi_by = {}
         cur = swi
@@ -165,6 +191,8 @@ def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None)
                 wgt = max(0.0, (15 - n) / 14.0) # 1 → 0 sur 15 jours
                 p15 = max(0.0, p15 - delta_pluie * wgt)
             tp = pv[d].get("temp"); sw = swi_by.get(d)
+            if tp is not None:
+                tp = tp - b_t          # T prévue ancrée sur SAFRAN
             k = pos[d]
             cols["s"][k] = round(stress_hydrothermique(sw, tp), 3) if sw is not None else None
             cols["w"][k] = round(sw, 3) if sw is not None else None
@@ -187,7 +215,13 @@ def construire_prevision(terrain, mailles, prev_list, hist_fin, historique=None)
         for n2, d in enumerate(dates):
             cols["i"][pos[d]] = fut[n2] if n2 < len(fut) else None
         out[mid] = cols
-    return {"dates": dates, "mailles": out}
+    if biais_t:
+        vals = list(biais_t.values())
+        n_anc = sum(1 for v in vals if v)
+        print(f"    ancrage T prévue : {n_anc}/{len(vals)} mailles, biais "
+              f"Open-Meteo−SAFRAN moyen {sum(vals)/len(vals):+.2f} °C "
+              f"(min {min(vals):+.1f}, max {max(vals):+.1f})")
+    return {"dates": dates, "mailles": out, "biais_t": biais_t}
 
 
 def corrige_historique(historique, terrain, coef_par_maille, stations, jours=15,

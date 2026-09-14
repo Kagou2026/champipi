@@ -275,6 +275,17 @@ GEL_SEUIL_C = 1.0            # °C : T° min récente <= ce seuil → garde-fou 
 PREV_HORIZON_JOURS = 16    # nb de jours de prévision exposés
 PREV_PAST_DAYS = 20        # passé récent récupéré (amorçage pluie 15 j / choc)
 PREV_CAP_SOL_MM = 120.0    # capacité sol pour la projection du SWI (heuristique)
+# ANCRAGE de la température prévue sur SAFRAN. Open-Meteo et SAFRAN ne
+# s'accordent pas sur le gradient vertical (mesuré 14/09/2026 sur 59 j : +1,4 °C
+# en vallée, −1,3 °C au Mont Lozère). Concaténer T SAFRAN (passé) et T Open-Meteo
+# (futur) fabriquait de faux chocs thermiques à la couture (score divergent
+# jusqu'à 1 jour sur 3). On mesure donc, par maille, le biais Open-Meteo − SAFRAN
+# sur les derniers jours de recouvrement et on le soustrait aux T prévues —
+# SANS décroissance (un biais de modèle persiste ; le faire fondre créerait une
+# fausse tendance de biais/15 °C par jour). Cf. champipi-temp-safran-vs-openmeteo.
+PREV_T_ANCRE_JOURS = 15    # jours de recouvrement utilisés pour mesurer le biais
+PREV_T_ANCRE_MIN = 5       # en dessous, pas d'ancrage (biais trop incertain)
+PREV_T_ANCRE_MAX = 4.0     # °C : borne de sécurité sur le biais appliqué
 SERIE_COURTE_JOURS = 30    # série courte inline par maille (queue laggée de l'historique)
 
 # --- Versant / exposition (modulation dynamique de l'indice) ---------------

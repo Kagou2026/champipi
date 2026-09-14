@@ -2,7 +2,12 @@ name: Champipi — mise à jour quotidienne
 
 on:
   schedule:
-    - cron: "0 5 * * *"      # tous les jours ~07h (heure de Paris l'été)
+    # Deux passages par jour (heures UTC ; GitHub ajoute souvent 10-30 min) :
+    #  - 07h Paris (été) : carte du matin, données SIM de la veille (J-2) ;
+    #  - 11h30 Paris (été) : APRÈS la publication de Météo-France
+    #    (QUOT_SIM2_latest observé vers 10h Paris) → données J-1.
+    - cron: "0 5 * * *"
+    - cron: "30 9 * * *"
   workflow_dispatch:          # permet aussi un lancement manuel
 
 # Droits nécessaires au déploiement GitHub Pages

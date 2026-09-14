@@ -15,7 +15,7 @@
         (?v=hash) ; si la version demandée diffère de celle en cache, on sert
         l'ancienne tout de suite (jamais bloquant sur réseau lent) et on
         télécharge la nouvelle pour la prochaine fois.
-   3. CACHE_TILES (tuiles OpenTopoMap / OSM / Esri)
+   3. CACHE_TILES (tuiles OpenTopoMap / OSM / IGN / Esri)
       - « cache d'abord » + plafond d'entrées ; hors-ligne, une tuile absente
         devient un carreau gris clair (au lieu de l'icône cassée).
 
@@ -44,7 +44,7 @@ const CORE = [
 ];
 
 /* Hôtes des fonds de carte. */
-const TILE_HOSTS = ["tile.opentopomap.org", "tile.openstreetmap.org", "server.arcgisonline.com"];
+const TILE_HOSTS = ["tile.opentopomap.org", "tile.openstreetmap.org", "server.arcgisonline.com", "data.geopf.fr"];
 /* Tuile de repli hors-ligne : 1x1 gris clair, étirée par Leaflet. */
 const TUILE_VIDE_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGN48ewBAAVoAq/zhBFrAAAAAElFTkSuQmCC";
 

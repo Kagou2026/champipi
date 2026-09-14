@@ -529,12 +529,23 @@ const fondTopo=L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
   {maxZoom:17, crossOrigin:true, attribution:"© OpenTopoMap (CC-BY-SA) · "+ATTRIB});
 const fondOSM=L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
   {maxZoom:17, crossOrigin:true, attribution:"© OpenStreetMap · "+ATTRIB});
+// Orthophotos IGN (BD ORTHO, 20 cm) via la Géoplateforme : WMTS public sans clé,
+// CORS « * », millésime récent par département, net jusqu'au zoom 19 (404 au-delà,
+// d'où maxNativeZoom). Gabarit partagé avec urlTuile() (« Préparer ma sortie ») :
+// l'URL pré-chargée doit être IDENTIQUE à celle que Leaflet demandera (clé de cache).
+const URL_IGN="https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0"
+  +"&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/jpeg"
+  +"&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
+const fondIGN=L.tileLayer(URL_IGN,
+  {maxZoom:19, maxNativeZoom:19, crossOrigin:true, attribution:"Orthophotos © IGN · "+ATTRIB});
+// Esri conservé en secours (couverture mondiale, autre millésime).
 const fondSat=L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
   {maxZoom:18, crossOrigin:true, attribution:"Imagerie © Esri, Maxar, Earthstar Geographics · "+ATTRIB});
 fondTopo.addTo(map);   // fond par défaut : relief topographique (lisibilité du versant)
-// Sélecteur de fond de carte (Topo ⇄ Plan ⇄ Satellite).
-L.control.layers({"Topo (OpenTopoMap)":fondTopo,"Plan (OSM)":fondOSM,"Satellite":fondSat},
+// Sélecteur de fond de carte (Topo ⇄ Plan ⇄ Satellite IGN ⇄ Satellite Esri).
+L.control.layers({"Topo (OpenTopoMap)":fondTopo,"Plan (OSM)":fondOSM,
+    "Satellite (IGN)":fondIGN,"Satellite (Esri)":fondSat},
   null,{position:"bottomleft"}).addTo(map);
 
 let chart=null;
@@ -2492,6 +2503,8 @@ try{
   // Même choix de sous-domaine que Leaflet ((x+y) mod 3) : l'URL pré-chargée est
   // EXACTEMENT celle que la carte demandera (le SW neutralise de toute façon a/b/c).
   function urlTuile(x,y,z){
+    if(typeof fondIGN!=="undefined" && map.hasLayer(fondIGN))
+      return URL_IGN.replace("{z}",z).replace("{y}",y).replace("{x}",x);
     if(typeof fondSat!=="undefined" && map.hasLayer(fondSat))
       return "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"+z+"/"+y+"/"+x;
     const s="abc"[Math.abs(x+y)%3];
@@ -2500,7 +2513,7 @@ try{
   }
   function planTuiles(){
     const b=map.getBounds(), z0=Math.max(8,Math.round(map.getZoom()));
-    const zMax=Math.min(map.hasLayer(fondSat)?18:17,16);
+    const zMax=Math.min(map.hasLayer(fondIGN)?19:map.hasLayer(fondSat)?18:17,16);
     const urls=[], zs=[];
     for(let z=z0; z<=zMax && urls.length<TUILE_CAP; z++){
       const a=tuileXY(b.getNorthWest(),z), c=tuileXY(b.getSouthEast(),z);

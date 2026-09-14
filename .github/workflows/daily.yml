@@ -47,7 +47,20 @@ jobs:
             echo "::error::Le secret SITE_PASSWORD est absent. Ajoute-le dans Settings > Secrets and variables > Actions."
             exit 1
           fi
-          npx --yes staticrypt@3 site/index.html -p "$PW" --short --remember 3 -d public
+          # -t : gabarit maison (site/staticrypt_template.html) — écran d'ouverture
+          # Champipi, textes en français et surtout remplacement du document SANS
+          # document.write (sinon l'écran de lancement de la PWA Android reste figé).
+          npx --yes staticrypt@3 site/index.html -p "$PW" --short --remember 3 -d public \
+            -t site/staticrypt_template.html \
+            --template-title "Champipi" \
+            --template-instructions "Accès réservé — entre le mot de passe." \
+            --template-placeholder "Mot de passe" \
+            --template-button "Ouvrir" \
+            --template-remember "Se souvenir de moi (3 jours)" \
+            --template-error "Mot de passe incorrect." \
+            --template-toggle-show "Afficher le mot de passe" \
+            --template-toggle-hide "Masquer le mot de passe" \
+            --template-color-primary "#2e5e34" --template-color-secondary "#f5f4f0"
           # StatiCrypt écrit public/index.html (page chiffrée, prête à publier).
           # --short : accepte un mot de passe court sans poser de question interactive.
           test -f public/index.html || { echo "::error::public/index.html non généré"; exit 1; }

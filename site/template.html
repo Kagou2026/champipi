@@ -71,6 +71,7 @@
   /* Secteurs favorables (date de prévision) : pastilles numérotées ①②③ */
   .favnum{width:24px;height:24px;border-radius:50%;background:#1e88e5;color:#fff;font-weight:800;font-size:13px;
     display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.35);cursor:pointer}
+  .favnum-bas{background:#90a4ae}
   .pill{font-size:11px;padding:2px 8px;border-radius:20px;background:#f0efe9;color:var(--muted)}
   /* Filtre essences (contrôle superposé à la carte) */
   .filtre{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:10px;
@@ -485,19 +486,26 @@ function calcMailleBbox(){
 function majSecteursFavorables(){
   favLayer.clearLayers();
   if(!H || HCUR<0 || HCUR<=TODAY_IDX) return;           // seulement sur une date future
+  // Même liste que la synthèse : TOUTES les mailles classées par indice prévu.
+  // Contour = seulement si ≥ SEUIL_FAV (« favorable ») ; pastilles ①②③ = les 3
+  // meilleures quoi qu'il arrive (grisées sous le seuil : citées, pas favorables).
   const k=HCUR, arr=[];
   for(const mid in H.mailles){ const v=H.mailles[mid].i?H.mailles[mid].i[k]:null;
-    if(v!=null && v>=SEUIL_FAV && D.mailles[mid]) arr.push({mid,v}); }
+    if(v!=null && D.mailles[mid]) arr.push({mid,v}); }
   arr.sort((a,b)=>b.v-a.v);
   arr.forEach((z,i)=>{
+    if(i>=3 && z.v<SEUIL_FAV) return;
     const m=D.mailles[z.mid]||{}, bb=MAILLE_BBOX[z.mid];
-    const st={pane:"fav",color:COL_FUTUR,weight:i<3?2.4:1.3,dashArray:"6 4",fill:false,interactive:false};
-    if(bb && isFinite(bb[0])) favLayer.addLayer(L.rectangle([[bb[1],bb[0]],[bb[3],bb[2]]],st));
-    else if(m.lat!=null && m.lon!=null) favLayer.addLayer(L.circle([m.lat,m.lon],Object.assign({radius:4000},st)));
+    const fav=z.v>=SEUIL_FAV;
+    if(fav){
+      const st={pane:"fav",color:COL_FUTUR,weight:i<3?2.4:1.3,dashArray:"6 4",fill:false,interactive:false};
+      if(bb && isFinite(bb[0])) favLayer.addLayer(L.rectangle([[bb[1],bb[0]],[bb[3],bb[2]]],st));
+      else if(m.lat!=null && m.lon!=null) favLayer.addLayer(L.circle([m.lat,m.lon],Object.assign({radius:4000},st)));
+    }
     if(i<3 && m.lat!=null && m.lon!=null){
-      const mk=L.marker([m.lat,m.lon],{icon:L.divIcon({className:"",html:`<div class="favnum">${i+1}</div>`,
+      const mk=L.marker([m.lat,m.lon],{icon:L.divIcon({className:"",html:`<div class="favnum${fav?"":" favnum-bas"}">${i+1}</div>`,
         iconSize:[24,24],iconAnchor:[12,12]}), zIndexOffset:1000});
-      mk.bindTooltip(`n°${i+1} · indice ${z.v} · ${Math.round(m.altitude||0)} m ${m.geologie_classe||""}`,{direction:"top"});
+      mk.bindTooltip(`n°${i+1} · indice ${z.v}${fav?"":" (sous le seuil "+SEUIL_FAV+")"} · ${Math.round(m.altitude||0)} m ${m.geologie_classe||""}`,{direction:"top"});
       mk.on("click",()=>{ deselectLayer(); ouvrirDetail(z.mid); });
       favLayer.addLayer(mk);
     }
@@ -1017,7 +1025,7 @@ function activerRejeu(){
          <input type="date" id="rj-input" min="${HDATES[0]}" max="${HDATES[HDATES.length-1]}" value="${HDATES[TODAY_IDX]}">
        </div>
        ${complet?"":`<div class="rejeu-row"><button id="rj-load" type="button" title="Remonter jusqu'en 2022 (~3 Mo/dépt)">Historique complet…</button></div>`}
-       <div class="note"><b style="color:${COL_AUJ}">vert</b> = aujourd'hui · <b style="color:${COL_PASSE}">magenta</b> = passé · <b style="color:${COL_FUTUR}">bleu</b> = prévision. ${complet?"Piste « à venir » = 15 prochains jours (échelle large).":"Passé = "+TODAY_IDX+" derniers jours ; « Historique complet » remonte à 2022."}<br>Sur une date de prévision, les mailles favorables (≥ ${SEUIL_FAV}) sont cerclées en bleu, les 3 meilleures numérotées.</div>`;
+       <div class="note"><b style="color:${COL_AUJ}">vert</b> = aujourd'hui · <b style="color:${COL_PASSE}">magenta</b> = passé · <b style="color:${COL_FUTUR}">bleu</b> = prévision. ${complet?"Piste « à venir » = 15 prochains jours (échelle large).":"Passé = "+TODAY_IDX+" derniers jours ; « Historique complet » remonte à 2022."}<br>Sur une date de prévision, les mailles favorables (≥ ${SEUIL_FAV}) sont cerclées en bleu ; ①②③ = les 3 meilleures (grisées si sous le seuil).</div>`;
     L.DomEvent.disableClickPropagation(div);
     L.DomEvent.disableScrollPropagation(div);
     return div;
@@ -1341,7 +1349,7 @@ function fillSynth(){
   const f1=addDays(PD[a],lag), f2=addDays(PD[b],lag);
   const NUM=["①","②","③"];
   const lien=(d)=>`<a data-goto="${d}" title="Voir la carte à cette date">${frDate(d)}</a>`;
-  const secteurs=top.map((z,i)=>`<a data-mid="${z.mid}" data-goto="${PD[peakK]}" title="Centrer la carte sur ce secteur (maille 8 km)">${NUM[i]||""} ${Math.round(z.altitude||0)} m ${z.geologie||""}</a>`).join(" · ");
+  const secteurs=top.map((z,i)=>`<a data-mid="${z.mid}" data-goto="${PD[peakK]}" title="Centrer la carte sur ce secteur (maille 8 km)">${NUM[i]||""} ${Math.round(z.altitude||0)} m ${z.geologie||""} (${z.indice})</a>`).join(" · ");
   el.innerHTML=`<div class="synth-t">🍄 Prévision de sortie</div>
     <div>Conditions favorables prévues <b>${lien(PD[a])}${a!==b?" → "+lien(PD[b]):""}</b> (indice jusqu'à ${peakV}).</div>
     <div>Pousse attendue ~${lag} j après → <b>${frDate(f1)}${a!==b?" → "+frDate(f2):""}</b>.</div>

@@ -40,6 +40,7 @@ from stations import (corrige, choc_station, preparer_hist,
 from versant import (stress_hydrothermique, indice_module,
                      coolness, indice_parcelle)
 from backfill_hist import historique_a_jour
+from sim_repli import completer_sim, message_repli
 from fraicheur import parse_iso, iso_ok, iso_ymd, evaluer as evaluer_fraicheur
 
 
@@ -272,14 +273,20 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
           f"parcelles → rendu : {src_rendu}")
 
     print(f"[{code}] 2/5 Données SIM...")
-    sim = organiser_par_maille(fetch_sim_features(bbox_l93=ctx["bbox_l93"]))
-    if not sim:
-        # Sans SIM il n'y a ni SWI ni pluie : rien à calculer. Erreur explicite
-        # (plutôt qu'une page vide) ; le département est sauté par main().
-        raise RuntimeError("WFS SIM : aucune maille datée sur l'emprise")
-    sim_fin = max((h["date"] for m in sim.values() for h in m["historique"]),
+    # Le WFS DREAL n'est qu'un relais du point SIM de Météo-France ; s'il est
+    # injoignable ou en retard, l'historique (SAFRAN QUOT_SIM2_latest, chargé
+    # plus bas) prolonge la série live — cf. sim_repli.py. On ne renonce donc
+    # pas ici : la décision « rien à calculer » est prise après ce repli.
+    try:
+        sim = organiser_par_maille(fetch_sim_features(bbox_l93=ctx["bbox_l93"]))
+    except Exception as e:
+        sim = {}
+        print(f"    ⚠ WFS SIM injoignable ({type(e).__name__}: {e})")
+    wfs_fin = max((h["date"] for m in sim.values() for h in m["historique"]),
                   default=None)
-    print(f"    {len(sim)} mailles SIM, dernier jour {sim_fin}")
+    sim_fin = wfs_fin
+    sim_repli = None
+    print(f"    {len(sim)} mailles SIM (WFS), dernier jour {wfs_fin}")
 
     print(f"[{code}] 3/5 Températures (Open-Meteo)...")
     coords = [(c["lat"], c["lon"]) for c in terrain]
@@ -310,6 +317,24 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
     if historique:
         print(f"    {historique['n_jours']} jours "
               f"({historique['debut']} → {historique['fin']})")
+        # REPLI SIM : jours que le WFS n'a pas (encore) servis mais que
+        # Météo-France a publiés (QUOT_SIM2_latest, même modèle, même grille).
+        # AVANT les corrections stations : la série live est corrigée plus bas,
+        # elle doit recevoir du SAFRAN brut.
+        rep = completer_sim(sim, historique, wfs_fin)
+        if rep["points"]:
+            sim_fin = rep["fin"]
+            sim_repli = {"wfs_fin": wfs_fin, "jours": rep["jours"],
+                         "points": rep["points"],
+                         "message": message_repli(rep, wfs_fin)}
+            print(f"    ⚠ repli SIM : {sim_repli['message']} "
+                  f"({rep['points']} points)")
+    if not sim:
+        # Ni WFS ni historique : sans SIM il n'y a ni SWI ni pluie, rien à
+        # calculer. Erreur explicite (plutôt qu'une page vide) ; le département
+        # est sauté par main().
+        raise RuntimeError("SIM : aucune maille datée (WFS vide et pas d'historique)")
+    if historique:
         # 1) toute la période, depuis l'archive stations (2022 →) ;
         n_corr, dernier_arch = corrige_historique_complet(
             historique, terrain, coef_par_maille, prep_hist)
@@ -621,6 +646,10 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
         "temp": temp_fin,
         "prevision": bool(prevision),
     })
+    # Repli SIM actif : information (pas une alerte — la donnée EST à jour),
+    # remontée à la page dans un encadré discret.
+    fraicheur["infos"] = [sim_repli["message"]] if sim_repli else []
+    fraicheur["sim_repli"] = sim_repli
     for msg in fraicheur["avertissements"]:
         print(f"    ⚠ fraîcheur : {msg}")
     if fraicheur["etat"] == "ok":

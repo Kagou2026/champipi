@@ -312,6 +312,8 @@
     font-size:12px;line-height:1.4;border:1px solid #f0c27b;background:#fff6e5;color:#6b3d00}
   .fraich.on{display:block}
   .fraich.bad{border-color:#e39a9a;background:#fdecec;color:#7a1f1f}
+  /* info (données à jour, mais une source de secours est en service) */
+  .fraich.info{border-color:#9ec5e8;background:#eaf4fc;color:#0d3d66}
   .fraich b{display:block;margin-bottom:3px}
   .fraich ul{margin:2px 0 0 14px;padding:0}
   .fraich li{margin:1px 0}
@@ -2613,6 +2615,9 @@ try{
 //   2. côté page : l'ÂGE de la donnée affichée par rapport à l'horloge du
 //      téléphone — indispensable pour une copie servie du cache (PWA) ou un
 //      robot qui n'a pas tourné depuis plusieurs jours (action GitHub en panne).
+// Plus un niveau « info » (bleu) : les données sont à jour mais une source de
+// secours est en service (dept.fraicheur.infos, ex. SIM pris chez Météo-France
+// parce que le relais DREAL Bretagne est en panne). Informer sans alarmer.
 // Non-critique : try/catch, en toute fin de script.
 // ============================================================================
 try{
@@ -2622,33 +2627,39 @@ try{
     const a=new Date(iso+"T12:00:00"), b=new Date(aujourdhui()+"T12:00:00");
     return Math.round((b-a)/86400000); };
   function evaluerFraicheur(){
-    const msgs=[]; let niv="ok";
+    const msgs=[], infos=[]; let niv="ok";
     const monte=(n)=>{ const o={ok:0,retard:1,perime:2}; if(o[n]>o[niv]) niv=n; };
     // 1. verdict du robot, tous départements (messages dédoublonnés)
     for(const code in DEPTDATA){
       const f=(DEPTDATA[code]||{}).fraicheur; if(!f) continue;
       if(f.etat==="perime"||f.etat==="absent") monte("perime"); else if(f.etat==="retard") monte("retard");
       (f.avertissements||[]).forEach(m=>{ if(!msgs.includes(m)) msgs.push(m); });
+      (f.infos||[]).forEach(m=>{ if(!infos.includes(m)) infos.push(m); });
     }
     // 2. âge de la donnée affichée (horloge locale)
     const age=jours(D.date_donnees);
     if(age===null){ monte("perime"); msgs.unshift("Aucune date de données : la carte est à prendre avec réserve."); }
     else if(age>FR_PERIME){ monte("perime"); msgs.unshift("La carte date du "+frDate(D.date_donnees)+" ("+age+" j) : elle ne reflète plus la météo actuelle — la mise à jour automatique n'a probablement pas tourné."); }
     else if(age>FR_RETARD){ monte("retard"); msgs.unshift("La carte date du "+frDate(D.date_donnees)+" ("+age+" j de retard)."); }
-    return {niv, msgs};
+    return {niv, msgs, infos};
   }
   function afficherFraicheur(){
-    const {niv,msgs}=evaluerFraicheur();
+    const {niv,msgs,infos}=evaluerFraicheur();
     if(dd){ dd.classList.toggle("stale", niv!=="ok"); dd.classList.toggle("bad", niv==="perime");
-      dd.title = niv==="ok" ? "" : msgs.join("\n"); }
+      dd.title = niv==="ok" ? (infos.join("\n")) : msgs.join("\n"); }
     if(!box) return;
-    if(niv==="ok" || !msgs.length){ box.className="fraich"; box.innerHTML=""; return; }
+    // niveau ok sans avertissement : encadré bleu si une source de secours est
+    // en service, sinon rien.
+    const alerte = niv!=="ok" && msgs.length;
+    if(!alerte && !infos.length){ box.className="fraich"; box.innerHTML=""; return; }
     // l'utilisateur peut replier l'encadré pour cette génération (pas pour toujours)
     let cache=null; try{ cache=sessionStorage.getItem("champipi_fraich_ferme"); }catch(_){}
     if(cache===RAW.genere_le){ box.className="fraich"; return; }
-    box.className="fraich on"+(niv==="perime"?" bad":"");
-    box.innerHTML="<b>"+(niv==="perime"?"⛔ Données périmées":"⚠ Données en retard")+"</b><ul>"
-      +msgs.map(m=>"<li>"+m.replace(/&/g,"&amp;").replace(/</g,"&lt;")+"</li>").join("")+"</ul>"
+    const esc=(m)=>m.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const lignes = alerte ? msgs.concat(infos) : infos;
+    box.className="fraich on"+(alerte ? (niv==="perime"?" bad":"") : " info");
+    box.innerHTML="<b>"+(alerte ? (niv==="perime"?"⛔ Données périmées":"⚠ Données en retard") : "ℹ Source de secours en service")+"</b><ul>"
+      +lignes.map(m=>"<li>"+esc(m)+"</li>").join("")+"</ul>"
       +"<button class='fx' title='Masquer'>✕</button>";
     box.querySelector(".fx").onclick=()=>{ box.className="fraich";
       try{ sessionStorage.setItem("champipi_fraich_ferme", RAW.genere_le); }catch(_){} };

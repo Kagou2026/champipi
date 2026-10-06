@@ -610,6 +610,9 @@ const fondTopo=L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
   {maxZoom:17, crossOrigin:true, attribution:"© OpenTopoMap (CC-BY-SA) · "+ATTRIB});
 const fondOSM=L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
   {maxZoom:17, crossOrigin:true, className:"fond-gris", attribution:"© OpenStreetMap · "+ATTRIB});
+// Même OSM, en couleurs (mêmes tuiles -> même cache) : seul le filtre CSS diffère.
+const fondOSMcoul=L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  {maxZoom:17, crossOrigin:true, attribution:"© OpenStreetMap · "+ATTRIB});
 // Orthophotos IGN (BD ORTHO, 20 cm) via la Géoplateforme : WMTS public sans clé,
 // CORS « * », millésime récent par département, net jusqu'au zoom 19 (404 au-delà,
 // d'où maxNativeZoom). Gabarit partagé avec urlTuile() (« Préparer ma sortie ») :
@@ -636,7 +639,7 @@ const fondSat=L.tileLayer(
 fondOSM.addTo(map); courbes.addTo(map);   // défaut : OSM décoloré + courbes de niveau
 // Sélecteur de fond (Plan décoloré ⇄ Topo ⇄ Satellite IGN ⇄ Satellite Esri)
 // + surimpression « Courbes de niveau » cochable.
-L.control.layers({"Plan décoloré (OSM)":fondOSM,"Topo (OpenTopoMap)":fondTopo,
+L.control.layers({"Plan décoloré (OSM)":fondOSM,"Plan (OSM)":fondOSMcoul,"Topo (OpenTopoMap)":fondTopo,
     "Satellite (IGN)":fondIGN,"Satellite (Esri)":fondSat},
   {"Courbes de niveau (IGN)":courbes},{position:"bottomleft"}).addTo(map);
 
@@ -2609,7 +2612,8 @@ try{
     if(typeof fondSat!=="undefined" && map.hasLayer(fondSat))
       return "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/"+z+"/"+y+"/"+x;
     const s="abc"[Math.abs(x+y)%3];
-    const h=(typeof fondOSM!=="undefined" && map.hasLayer(fondOSM))?"tile.openstreetmap.org":"tile.opentopomap.org";
+    const osm=(typeof fondOSM!=="undefined" && map.hasLayer(fondOSM)) || (typeof fondOSMcoul!=="undefined" && map.hasLayer(fondOSMcoul));
+    const h=osm?"tile.openstreetmap.org":"tile.opentopomap.org";
     return "https://"+s+"."+h+"/"+z+"/"+x+"/"+y+".png";
   }
   // Fond + courbes de niveau si la surimpression est cochée (2 tuiles par case,

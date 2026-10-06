@@ -197,6 +197,9 @@
   .stbars .sbar2 .mm.on{color:#0d47a1;font-weight:650}
   .stbars .sbar2 .mm.off{color:#c7ccd1}
   .stbars .sbar2 .d{font-size:8px;color:var(--muted);margin-top:3px}
+  /* Fond « décoloré » : filtre CSS sur le conteneur des tuiles (mêmes tuiles,
+     même cache SW) — les forêts colorées de l'indice ressortent mieux. */
+  .fond-gris{filter:grayscale(1) brightness(1.12) contrast(.82)}
   /* ====================== MOBILE ====================== */
   @media(max-width:760px){
     header{padding:9px 14px;gap:8px}
@@ -249,9 +252,10 @@
     /* Remonter les contrôles du bas au-dessus de la feuille réduite */
     .leaflet-bottom{bottom:112px}
     .leaflet-control-layers{margin-bottom:6px!important}
-  /* Fond « décoloré » : filtre CSS sur le conteneur des tuiles (mêmes tuiles,
-     même cache SW) — les forêts colorées de l'indice ressortent mieux. */
-  .fond-gris{filter:grayscale(1) brightness(1.12) contrast(.82)}
+    /* Bandeau d'attribution sur une ligne tronquée (≤ 55 % de large) : sinon il
+       passe sur 3 lignes et recouvre l'icône des couches en bas à gauche. */
+    .leaflet-control-attribution{max-width:55vw;white-space:nowrap;overflow:hidden;
+      text-overflow:ellipsis;font-size:9px}
     /* Bouton position plus grand au doigt */
     .locctrl button{width:42px;height:42px;font-size:22px;border-radius:50%}
 

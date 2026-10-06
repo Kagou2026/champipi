@@ -18,10 +18,13 @@ site/hist_*.json
 # Copie SERVIE de l'historique des stations (la base vit dans data/, committée).
 site/stations_hist.json
 
-# Sortie de chiffrement StatiCrypt + config auto-générée
+# Sortie de chiffrement StatiCrypt
 public/
 _public_test/
-.staticrypt.json
+# .staticrypt.json est VERSIONNÉ (volontairement) : il porte le sel. Sans lui,
+# chaque build CI tirait un sel aléatoire → la clé « se souvenir de moi »
+# (dérivée mot de passe + sel) devenait fausse à chaque génération → mot de
+# passe redemandé tous les jours. Le sel n'est pas secret (il est dans la page).
 
 # macOS
 .DS_Store

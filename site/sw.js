@@ -6,10 +6,11 @@
 
    1. CACHE_APP  (page + librairies + icônes)
       - librairies/icônes : « cache d'abord » (elles ne changent qu'avec VERSION) ;
-      - la PAGE ("./")     : « réseau d'abord avec délai court » — fraîche quand
-        le réseau marche, servie du cache après NET_TIMEOUT_MS sinon. C'est la
-        page CHIFFRÉE StatiCrypt qui est cachée : le déchiffrement se fait
-        ensuite dans le navigateur, il marche donc aussi hors-ligne.
+      - la PAGE ("./")     : « cache d'abord » (ouverture immédiate, même en 4G
+        faible) ; la fraîcheur est gérée par la page (version.json → message MAJ
+        → nouvelle page en cache → reload). Réseau seulement à la toute première
+        ouverture. C'est la page CHIFFRÉE StatiCrypt qui est cachée : le
+        déchiffrement se fait ensuite dans le navigateur, donc aussi hors-ligne.
    2. CACHE_DATA (geom_XX.json, hist_XX.json, stations_hist.json)
       - « cache d'abord, rafraîchi en arrière-plan » : les URLs sont versionnées
         (?v=hash) ; si la version demandée diffère de celle en cache, on sert
@@ -119,24 +120,37 @@ async function limiterTuiles(c) {
   } catch (_) {}
 }
 
-/* Page ("./") : réseau d'abord (fraîcheur), cache après NET_TIMEOUT_MS.
-   Exception : juste après une mise à jour (message MAJ ci-dessous), la page
-   fraîche vient d'être rangée dans le cache — le rechargement la sert
-   directement, sans la re-télécharger ni attendre le réseau. */
+/* Page ("./") : CACHE D'ABORD, réseau seulement s'il n'y a aucune copie locale.
+   Pourquoi (06/10/2026) : la page chiffrée pèse ~3 Mo. L'écran de lancement
+   Android (icône au milieu) reste affiché tant que la navigation n'a pas reçu
+   et peint la page ; avec « réseau d'abord », une 4G faible bloquait l'ouverture
+   pendant TOUT le téléchargement — le délai de 6 s ne couvrait que l'attente des
+   en-têtes (fetch résout dès les en-têtes), et `await cache.put` attendait de
+   surcroît le corps entier avant de répondre. Vu de l'utilisateur : « logo puis
+   rien », il tue l'app, la relance → le téléchargement fini en arrière-plan est
+   dans le cache HTTP → instantané.
+   Fraîcheur : assurée par la page elle-même (version.json → bandeau MAJ → le SW
+   télécharge la nouvelle page via message MAJ → reload), AVEC l'interface déjà
+   affichée et une barre de progression. _pageFraicheA n'est plus décisif ici
+   (le cache est toujours servi) mais reste renseigné par precache(). */
 let _pageFraicheA = 0;
-async function repPage(req) {
+async function repPage(req, e) {
   const c = await caches.open(CACHE_APP);
-  if (Date.now() - _pageFraicheA < 60000) {
-    const hit = await c.match("./", { ignoreSearch: true });
-    if (hit) return hit;
-  }
+  const hit = await c.match("./", { ignoreSearch: true });
+  if (hit) return hit;
+  // Première ouverture sur cet appareil : le réseau est obligatoire. Délai long
+  // (en-têtes) ; la réponse est transmise EN FLUX à la page, la copie en cache
+  // se termine en arrière-plan (waitUntil) sans retarder l'affichage.
   try {
-    const r = await fetchAvecDelai(req, NET_TIMEOUT_MS);
-    if (r && r.ok) { await c.put("./", r.clone()); return r; }
+    const r = await fetchAvecDelai(req, 60000);
+    if (r && r.ok) {
+      const copie = r.clone();
+      const rangement = c.put("./", copie).catch(() => {});
+      if (e) e.waitUntil(rangement);
+      return r;
+    }
     throw new Error("http " + (r && r.status));
   } catch (_) {
-    const hit = await c.match("./", { ignoreSearch: true });
-    if (hit) return hit;
     return new Response(
       "<html lang='fr'><body style='font-family:system-ui;padding:2em;text-align:center'>" +
       "<h2>📵 Hors-ligne</h2><p>Champipi n'a pas encore été ouvert avec du réseau " +
@@ -198,7 +212,7 @@ self.addEventListener("fetch", (e) => {
   if (estTuile(url)) { e.respondWith(repTuile(req)); return; }
   if (url.origin !== self.location.origin) return;   // autres domaines : défaut
 
-  if (req.mode === "navigate") { e.respondWith(repPage(req)); return; }
+  if (req.mode === "navigate") { e.respondWith(repPage(req, e)); return; }
   if (url.pathname.endsWith("/version.json")) {          // toujours frais, jamais caché
     e.respondWith(fetch(req, { cache: "no-store" })); return;
   }

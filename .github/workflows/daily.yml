@@ -44,7 +44,7 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Chiffrer la page (mot de passe + mémorisation 3 jours)
+      - name: Chiffrer la page (mot de passe + mémorisation 7 jours)
         env:
           PW: ${{ secrets.SITE_PASSWORD }}
         run: |
@@ -52,16 +52,18 @@ jobs:
             echo "::error::Le secret SITE_PASSWORD est absent. Ajoute-le dans Settings > Secrets and variables > Actions."
             exit 1
           fi
+          # Le sel est lu dans .staticrypt.json (versionné) : il doit rester STABLE
+          # d'un build à l'autre, sinon la mémorisation du mot de passe saute.
           # -t : gabarit maison (site/staticrypt_template.html) — écran d'ouverture
           # Champipi, textes en français et surtout remplacement du document SANS
           # document.write (sinon l'écran de lancement de la PWA Android reste figé).
-          npx --yes staticrypt@3 site/index.html -p "$PW" --short --remember 3 -d public \
+          npx --yes staticrypt@3 site/index.html -p "$PW" --short --remember 7 -d public \
             -t site/staticrypt_template.html \
             --template-title "Champipi" \
             --template-instructions "Accès réservé — entre le mot de passe." \
             --template-placeholder "Mot de passe" \
             --template-button "Ouvrir" \
-            --template-remember "Se souvenir de moi (3 jours)" \
+            --template-remember "Se souvenir de moi (7 jours)" \
             --template-error "Mot de passe incorrect." \
             --template-toggle-show "Afficher le mot de passe" \
             --template-toggle-hide "Masquer le mot de passe" \

@@ -56,7 +56,7 @@ DEPARTEMENTS = {
            "grille": "data/safran_grille_12.json"},
     "34": {"nom": "Hérault", "bbox_l93": (654738, 6226874, 804384, 6327592),
            "contour": _CONTOUR.format(code="34", slug="herault"),
-           "alt_min": 400,
+           "alt_min": 150,
            "terrain": "data/terrain_34.json", "foret_geom": "data/foret_geom_34.json",
            "versant_geom": "data/versant_geom_34.json", "hist": "data/historique_34.json",
            "parcelles_geom": "data/parcelles_geom_34.json",

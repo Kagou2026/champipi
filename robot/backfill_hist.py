@@ -44,6 +44,9 @@ def _fmt(d):  # "20220101" -> "2022-01-01"
     return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
 
 
+SIM_S3_PATTERN = "https://meteofrance.s3.sbg.io.cloud.ovh.net/data/REF_CC/SIM/{nom}.csv.gz"
+
+
 def lister_sources(an_min=None):
     """URLs des CSV.gz SIM annuels (année >= an_min) + le fichier 'latest'.
 
@@ -53,14 +56,23 @@ def lister_sources(an_min=None):
     """
     if an_min is None:
         an_min = int(WARMUP[:4])
-    for essai in range(1, 6):            # data.gouv : coupures sporadiques
+    js = None
+    for essai in range(1, 4):            # data.gouv : coupures sporadiques
         try:
             js = requests.get(DATASET_API, timeout=60).json()
             break
         except (requests.exceptions.RequestException, ValueError):
-            if essai == 5:
-                raise
             time.sleep(5 * essai)
+    if js is None:
+        # API data.gouv injoignable : les URL S3 Météo-France suivent un motif
+        # stable (vérifié 11/10/2026 : QUOT_SIM2_<année>.csv.gz + _latest) ;
+        # on les reconstruit plutôt que de laisser l'historique sans top-up.
+        print("    (API data.gouv injoignable → URL SAFRAN reconstruites)")
+        annee_max = date.today().year
+        urls = [(f"QUOT_SIM2_{a}", SIM_S3_PATTERN.format(nom=f"QUOT_SIM2_{a}"))
+                for a in range(an_min, annee_max + 1)]
+        urls.append(("QUOT_SIM2_latest", SIM_S3_PATTERN.format(nom="QUOT_SIM2_latest")))
+        return urls
     annees, latest = [], None
     for r in js.get("resources", []):
         if r.get("format") != "csv.gz":

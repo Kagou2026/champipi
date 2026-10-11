@@ -63,9 +63,20 @@ def fetch_bdforet(geom, timeout=120, count=6000):
         "bbox": f"{lat_min},{lon_min},{lat_max},{lon_max},"
                 f"urn:ogc:def:crs:EPSG::4326",
     }
-    r = requests.get(BDFORET_WFS_URL, params=params, timeout=timeout)
-    r.raise_for_status()
-    return r.json().get("features", [])
+    # Réponses de ~6 Mo : une coupure en cours de transfert (reset, EOF) ou un
+    # 5xx passager ne doit pas laisser une maille SANS forêt (trou dans le
+    # versant et les parcelles) → jusqu'à 5 essais, backoff croissant.
+    for essai in range(1, 6):
+        try:
+            r = requests.get(BDFORET_WFS_URL, params=params, timeout=timeout)
+            r.raise_for_status()
+            return r.json().get("features", [])
+        except (requests.exceptions.RequestException, ValueError) as e:
+            if essai == 5:
+                raise
+            print(f"      BD Forêt : essai {essai}/5 échoué ({type(e).__name__}), "
+                  f"nouvel essai dans {10 * essai}s")
+            time.sleep(10 * essai)
 
 
 def taux_boisement(geometry):

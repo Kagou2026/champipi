@@ -16,6 +16,7 @@ embarquera la série longue dans la page.
 """
 import csv
 import gzip
+import time
 import io
 import json
 import os
@@ -52,7 +53,14 @@ def lister_sources(an_min=None):
     """
     if an_min is None:
         an_min = int(WARMUP[:4])
-    js = requests.get(DATASET_API, timeout=60).json()
+    for essai in range(1, 6):            # data.gouv : coupures sporadiques
+        try:
+            js = requests.get(DATASET_API, timeout=60).json()
+            break
+        except (requests.exceptions.RequestException, ValueError):
+            if essai == 5:
+                raise
+            time.sleep(5 * essai)
     annees, latest = [], None
     for r in js.get("resources", []):
         if r.get("format") != "csv.gz":
@@ -99,7 +107,26 @@ def moissonner(urls, rev):
     cols = None
     for titre, url in urls:
         print(f"  … {titre}")
-        n_match = 0
+        # Un fichier annuel fait 100-300 Mo : une coupure réseau en cours de
+        # flux (IncompleteRead / ConnectionReset, fréquent via certains proxys)
+        # relance le téléchargement de CE fichier depuis le début, jusqu'à
+        # 5 fois, au lieu de perdre toute la moisson.
+        for essai in range(1, 6):
+            try:
+                n_match = _moissonner_un(url, rev, data)
+                break
+            except (requests.exceptions.RequestException, EOFError, OSError) as e:
+                if essai == 5:
+                    raise
+                print(f"     coupure ({type(e).__name__}) — nouvel essai {essai}/5")
+                time.sleep(10 * essai)
+        print(f"     {n_match} lignes retenues")
+    return data
+
+
+def _moissonner_un(url, rev, data):
+    n_match = 0
+    if True:
         with requests.get(url, stream=True, timeout=600) as resp:
             resp.raise_for_status()
             gz = gzip.GzipFile(fileobj=resp.raw)
@@ -130,8 +157,7 @@ def moissonner(urls, rev):
                 data.setdefault(mid, {})[d] = {
                     "pluie": pluie, "t": f("T"), "swi": f("SWI")}
                 n_match += 1
-        print(f"     {n_match} lignes retenues")
-    return data
+    return n_match
 
 
 def series_par_maille(data, coef, debut=DEBUT, alt=None):

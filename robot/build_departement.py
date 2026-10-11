@@ -77,6 +77,15 @@ def build_terrain(code):
     alts = altitudes_par_lots([(dedans[i]["lat"], dedans[i]["lon"]) for i in ids])
     for i, mid in enumerate(ids):
         dedans[mid]["altitude"] = alts[i] if i < len(alts) else None
+    alt_min = ctx.get("alt_min")
+    if alt_min:
+        # Filtre altitude (registre) : mailles de plaine écartées AVANT la
+        # géologie et la forêt (requêtes économisées) ; une maille sans
+        # altitude est gardée (on ne jette pas sur une donnée manquante).
+        avant = len(ids)
+        ids = [m for m in ids if dedans[m]["altitude"] is None
+               or dedans[m]["altitude"] >= alt_min]
+        print(f"      filtre altitude ≥ {alt_min} m : {len(ids)}/{avant} mailles gardées")
     print("  4/5 géologie (BRGM)…")
     cellules = []
     for n, mid in enumerate(ids, 1):

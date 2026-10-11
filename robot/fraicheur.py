@@ -24,7 +24,7 @@ SEUILS = {
     "sim":        (3, 6),        # J-1 (SAFRAN-ISBA, WFS DREAL Bretagne)
     "stations":   (5, 9),        # paquet climato Météo-France : J-1 à J-3
     "historique": (3, 6),        # rejeu long, doit suivre SIM
-    "temp":       (2, 5),        # Open-Meteo : archive J-1 / prévision
+    "temp":       (3, 6),        # SAFRAN QUOT_SIM2_latest (J-1), via l'historique
 }
 ETAT_ORDRE = {"ok": 0, "retard": 1, "perime": 2, "absent": 3}
 
@@ -76,7 +76,7 @@ def evaluer(sources, aujourdhui=None):
     libelle = {"sim": "Humidité des sols (SAFRAN-ISBA)",
                "stations": "Pluviomètres Météo-France",
                "historique": "Historique long (rejeu)",
-               "temp": "Températures (Open-Meteo)"}
+               "temp": "Températures (SAFRAN)"}
     out, avert, pire = {}, [], "ok"
     for cle in SEUILS:
         d = parse_iso(sources.get(cle))

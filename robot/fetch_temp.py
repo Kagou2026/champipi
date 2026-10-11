@@ -68,6 +68,27 @@ def temperatures_par_maille(coords, past_days=16, recent=3, lot=50, timeout=60,
     return out
 
 
+def temperatures_depuis_historique(terrain, historique, fenetre=20, recent=3):
+    """T° de maille depuis l'HISTORIQUE LONG (SAFRAN QUOT_SIM2, colonne T),
+    même structure de sortie que `temperatures_par_maille` (même ordre que
+    `terrain`). Renvoie [] si l'historique est absent → l'appelant retombe sur
+    Open-Meteo. Une maille sans T dans l'historique donne par_date vide et
+    recent None (composante température neutralisée pour elle seule)."""
+    if not historique or not historique.get("dates"):
+        return []
+    dates = historique["dates"]
+    mailles = historique.get("mailles", {})
+    out = []
+    for cell in terrain:
+        arr = (mailles.get(cell["maille_id"]) or {}).get("t") or []
+        par_date = {d: round(v, 1) for d, v in zip(dates[-fenetre:], arr[-fenetre:])
+                    if v is not None}
+        derniers = [v for v in arr[-recent:] if v is not None]
+        moy = round(sum(derniers) / len(derniers), 1) if derniers else None
+        out.append({"par_date": par_date, "recent": moy})
+    return out
+
+
 if __name__ == "__main__":
     res = temperatures_par_maille([(44.52, 3.55)])
     print("recent :", res[0]["recent"])

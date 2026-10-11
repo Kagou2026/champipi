@@ -33,6 +33,7 @@ besoin des jours de décembre 2021 pour être calculables.
 """
 import csv
 import gzip
+import time
 import io
 import json
 import os
@@ -93,12 +94,16 @@ def moissonner(depts=None, debut=DEBUT, timeout=900, verbose=True, sources=None)
     for dep in depts:
         for tmpl, _t in (sources or SOURCES):
             url = tmpl.format(dep=dep)
-            try:
+            # Coupure réseau en cours de flux (IncompleteRead / reset) : on
+            # relance CE fichier jusqu'à 5 fois au lieu de le sauter en silence
+            # (les jours déjà lus sont simplement réécrits à l'identique).
+            for essai in range(1, 6):
+              try:
                 with requests.get(url, stream=True, timeout=timeout) as resp:
                     if resp.status_code != 200:
                         if verbose:
                             print(f"     ⚠ {resp.status_code} {url.rsplit('/', 1)[-1]}")
-                        continue
+                        break
                     gz = gzip.GzipFile(fileobj=resp.raw)
                     reader = csv.DictReader(
                         io.TextIOWrapper(gz, encoding="latin-1"), delimiter=";")
@@ -131,12 +136,15 @@ def moissonner(depts=None, debut=DEBUT, timeout=900, verbose=True, sources=None)
                         if tn is not None or tx is not None or tm is not None:
                             st["t"][jour] = (tn, tx, tm)
                         n += 1
-            except requests.exceptions.RequestException as e:
                 if verbose:
-                    print(f"     ⚠ {type(e).__name__} sur {url.rsplit('/', 1)[-1]}")
-                continue
-            if verbose:
-                print(f"     {dep} · {url.rsplit('/', 1)[-1][:34]:34} {n:7d} lignes")
+                    print(f"     {dep} · {url.rsplit('/', 1)[-1][:34]:34} {n:7d} lignes")
+                break
+              except (requests.exceptions.RequestException, EOFError, OSError) as e:
+                if verbose:
+                    print(f"     ⚠ {type(e).__name__} sur {url.rsplit('/', 1)[-1]}"
+                          f" (essai {essai}/5)")
+                if essai < 5:
+                    time.sleep(10 * essai)
     return stations
 
 

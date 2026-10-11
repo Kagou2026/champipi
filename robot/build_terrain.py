@@ -67,17 +67,62 @@ def geologie_au_point(lat, lon, timeout=60):
         return None
 
 
+IGN_ALTI_URL = "https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json"
+
+
+def _altitudes_ign(chunk, timeout=60):
+    """Repli : service altimétrique IGN (Géoplateforme, RGE ALTI, sans clé).
+    Même producteur que le MNT du versant. -99999 = pas de donnée → None."""
+    r = requests.get(IGN_ALTI_URL, timeout=timeout, params={
+        "lon": "|".join(str(c[1]) for c in chunk),
+        "lat": "|".join(str(c[0]) for c in chunk),
+        "zonly": "true", "resource": "ign_rge_alti_wld"})
+    r.raise_for_status()
+    return [None if (v is None or v < -9000) else round(float(v), 1)
+            for v in r.json().get("elevations", [])]
+
+
 def altitudes_par_lots(coords, lot=90):
-    """Renvoie la liste des altitudes (m) pour une liste de (lat, lon)."""
+    """Renvoie la liste des altitudes (m) pour une liste de (lat, lon).
+    Open-Meteo d'abord (source historique des 3 premiers départements), IGN
+    en repli si Open-Meteo reste injoignable (quota 429 / coupures TLS vus le
+    11/10/2026 depuis le conteneur cloud) — l'écart entre les deux MNT est
+    négligeable à l'échelle d'un centroïde de maille 8 km."""
     resultats = []
     for i in range(0, len(coords), lot):
         chunk = coords[i:i + lot]
         lats = ",".join(str(c[0]) for c in chunk)
         lons = ",".join(str(c[1]) for c in chunk)
-        r = requests.get(OPENMETEO_URL.replace("/forecast", "/elevation"),
-                         params={"latitude": lats, "longitude": lons}, timeout=60)
-        r.raise_for_status()
-        resultats.extend(r.json().get("elevation", []))
+        # Open-Meteo est parfois capricieux (coupure TLS, 5xx) : on réessaie
+        # avec backoff plutôt que de perdre tout le build sur un lot.
+        for essai in range(1, 6):
+            try:
+                r = requests.get(OPENMETEO_URL.replace("/forecast", "/elevation"),
+                                 params={"latitude": lats, "longitude": lons},
+                                 timeout=60)
+                r.raise_for_status()
+                break
+            except requests.exceptions.RequestException as e:
+                r = None
+                if essai == 5:
+                    break
+                # 429 = quota par minute dépassé : attendre bien plus longtemps.
+                code = getattr(getattr(e, "response", None), "status_code", None)
+                attente = 65 if code == 429 else 5 * essai
+                print(f"      altitudes : tentative {essai}/5 échouée "
+                      f"({type(e).__name__}) — nouvel essai dans {attente}s")
+                time.sleep(attente)
+        if r is not None:
+            resultats.extend(r.json().get("elevation", []))
+        else:
+            print("      altitudes : Open-Meteo injoignable → service altimétrique IGN")
+            for essai in range(1, 5):
+                try:
+                    resultats.extend(_altitudes_ign(chunk)); break
+                except requests.exceptions.RequestException as e:
+                    if essai == 4:
+                        raise
+                    time.sleep(5 * essai)
         time.sleep(0.5)
     return resultats
 

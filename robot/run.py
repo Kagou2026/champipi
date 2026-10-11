@@ -3,14 +3,14 @@
 Étapes :
   1. charge le masque terrain statique (géologie, altitude, géométrie) ;
   2. récupère les données SIM du jour + 15 j d'historique par maille ;
-  3. récupère la température récente par maille (Open-Meteo) ;
+  3. prend la température par maille dans l'historique SAFRAN (repli Open-Meteo) ;
   4. calcule l'indice cèpe (aujourd'hui + série 15 j) par maille ;
   5. génère site/index.html auto-porté (données embarquées).
 
 Le chiffrement de la page est réalisé ensuite par le workflow GitHub Actions.
 """
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 
 from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     SITE_TEMPLATE, SITE_OUTPUT, LAG_JOURS_PLAINE,
@@ -28,9 +28,10 @@ from config import (TERRAIN_FILE, FORET_GEOM_FILE, VERSANT_GEOM_FILE,
                     STATION_FRESH_OK_J,
                     STATION_FRESH_MUET_J, STATION_COUV_MIN,
                     PREV_HORIZON_JOURS, PREV_CAP_SOL_MM, SERIE_COURTE_JOURS,
-                    PREV_T_ANCRE_JOURS, PREV_T_ANCRE_MIN, PREV_T_ANCRE_MAX)
+                    PREV_T_ANCRE_JOURS, PREV_T_ANCRE_MIN, PREV_T_ANCRE_MAX,
+                    TEMP_SAFRAN_RETARD_MAX)
 from fetch_sim import fetch_sim_features, organiser_par_maille
-from fetch_temp import temperatures_par_maille
+from fetch_temp import temperatures_par_maille, temperatures_depuis_historique
 from fetch_prevision import prevision_par_maille
 from fetch_stations import (fetch_stations, cumul_15j, serie_pluie,
                             etat_fraicheur, serie_temp, a_temperature)
@@ -346,20 +347,6 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
     sim_repli = None
     print(f"    {len(sim)} mailles SIM (WFS), dernier jour {wfs_fin}")
 
-    print(f"[{code}] 3/5 Températures (Open-Meteo)...")
-    coords = [(c["lat"], c["lon"]) for c in terrain]
-    # Dégradation propre : Open-Meteo injoignable = indice calculé SANS la
-    # composante température (sous-score neutralisé, cf. calcul_indice) et
-    # avertissement de fraîcheur, plutôt que département perdu.
-    try:
-        temps = temperatures_par_maille(coords)
-    except Exception as e:
-        temps = []
-        print(f"    ⚠ températures indisponibles ({type(e).__name__}: {e}) — "
-              f"indice calculé sans température")
-    temp_fin = max((d for t in temps for d, v in (t.get("par_date") or {}).items()
-                    if v is not None and iso_ok(d)), default=None)
-
     # Coefs terrain par maille (géologie × forêt × essence), connus d'avance :
     # nécessaires pour corriger la queue de l'historique long AVANT la boucle.
     coef_par_maille = {c["maille_id"]: c["coef_terrain"] * c.get("coef_foret", 1.0)
@@ -372,6 +359,41 @@ def traiter_departement(ctx, stations, emettre_stations=True, prep_hist=None):
     # direct + la série 15 j côté page).
     print("    Historique (rejeu long)…")
     historique = historique_a_jour(ctx["hist"], ctx["grille"], ctx["terrain"])
+
+    print(f"[{code}] 3/5 Températures (SAFRAN, via l'historique)...")
+    # Depuis le 11/10/2026 la T° de maille est celle de SAFRAN (colonne T de
+    # QUOT_SIM2_latest), déjà moissonnée dans l'historique long : même modèle et
+    # même grille 8 km que le SWI/la pluie, zéro requête réseau de plus, et le
+    # stress du jour (signe de la modulation versant) devient homogène avec la
+    # série laggée qui fournit l'indice du jour. Open-Meteo ne sert plus qu'en
+    # REPLI quand l'historique n'existe pas encore (département fraîchement
+    # ajouté, avant son backfill) ; l'échec du repli neutralise simplement la
+    # composante température (cf. calcul_indice) au lieu de perdre le dépt.
+    coords = [(c["lat"], c["lon"]) for c in terrain]   # aussi pour la prévision
+    def _fin(ts):
+        return max((d for t in ts for d, v in (t.get("par_date") or {}).items()
+                    if v is not None and iso_ok(d)), default=None)
+    temps = temperatures_depuis_historique(terrain, historique)
+    temp_fin = _fin(temps)
+    retard_t = (date.today() - parse_iso(temp_fin)).days if temp_fin else None
+    if temps and retard_t is not None and retard_t <= TEMP_SAFRAN_RETARD_MAX:
+        print(f"    {sum(1 for t in temps if t.get('recent') is not None)}/{len(terrain)} "
+              f"mailles avec T° SAFRAN (dernier jour {temp_fin})")
+    else:
+        # Historique absent ou en retard (QUOT_SIM2_latest non publié / non
+        # téléchargé) : Open-Meteo, qui reste indépendant de Météo-France.
+        print("    " + ("historique absent" if not temps else
+                        f"T° SAFRAN en retard ({retard_t} j)") + " → repli Open-Meteo")
+        try:
+            temps_om = temperatures_par_maille(coords)
+        except Exception as e:
+            temps_om = []
+            print(f"    ⚠ températures Open-Meteo indisponibles ({type(e).__name__}) — "
+                  + ("on garde la T° SAFRAN en retard" if temps else
+                     "indice calculé sans température"))
+        if temps_om:
+            temps, temp_fin = temps_om, _fin(temps_om)
+
     if historique:
         print(f"    {historique['n_jours']} jours "
               f"({historique['debut']} → {historique['fin']})")

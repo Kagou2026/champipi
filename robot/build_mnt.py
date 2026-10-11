@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from config import DEPARTEMENTS
 
 RES = 10.0
-TILE = 2048
+TILE = 1024   # 10,24 km à 10 m (~4 Mo float32 par tuile ; 2048 coupait trop souvent via proxy)
 MARGE = 2000.0
 WMS = "https://data.geopf.fr/wms-r/wms"
 _to93 = Transformer.from_crs(4326, 2154, always_xy=True).transform
@@ -72,18 +72,19 @@ def _fetch_tile(bbox, w, h):
          "CRS": "EPSG:2154", "FORMAT": "image/geotiff",
          "WIDTH": str(w), "HEIGHT": str(h),
          "BBOX": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}"}
-    for att in range(4):
+    for att in range(8):
         try:
-            r = requests.get(WMS, params=p, timeout=180)
+            r = requests.get(WMS, params=p, timeout=300)
             r.raise_for_status()
             if not r.headers.get("content-type", "").startswith("image"):
                 raise RuntimeError(r.text[:200])
             with MemoryFile(r.content) as mf, mf.open() as ds:
                 return ds.read(1).astype("float32")
         except Exception as e:
-            if att == 3:
+            if att == 7:
                 raise
-            print(f"    tuile échec ({e}) — retry"); time.sleep(3)
+            print(f"    tuile échec ({type(e).__name__}) — retry {att + 1}/7")
+            time.sleep(5 * (att + 1))
 
 
 def build_dem(code):

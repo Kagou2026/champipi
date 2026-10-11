@@ -42,10 +42,29 @@ DEPARTEMENTS = {
            "versant_geom": "data/versant_geom_07.json", "hist": "data/historique_07.json",
            "parcelles_geom": "data/parcelles_geom_07.json",
            "grille": "data/safran_grille_07.json"},
+    # Ajoutés le 11/10/2026. bbox = emprise L93 du contour france-geojson + 8 km
+    # (calculée, pas saisie). `alt_min` (m) : on ne garde que les mailles dont
+    # l'altitude moyenne atteint ce seuil — Hérault limité au haut pays
+    # (Espinouse, Caroux, Somail, Monts d'Orb, Larzac) : la plaine et les
+    # garrigues ont une autre écologie (cèpe bronzé sous chêne vert, saison
+    # décalée) que le modèle, calibré en Lozère, décrirait mal.
+    "12": {"nom": "Aveyron", "bbox_l93": (599709, 6279939, 744205, 6434924),
+           "contour": _CONTOUR.format(code="12", slug="aveyron"),
+           "terrain": "data/terrain_12.json", "foret_geom": "data/foret_geom_12.json",
+           "versant_geom": "data/versant_geom_12.json", "hist": "data/historique_12.json",
+           "parcelles_geom": "data/parcelles_geom_12.json",
+           "grille": "data/safran_grille_12.json"},
+    "34": {"nom": "Hérault", "bbox_l93": (654738, 6226874, 804384, 6327592),
+           "contour": _CONTOUR.format(code="34", slug="herault"),
+           "alt_min": 400,
+           "terrain": "data/terrain_34.json", "foret_geom": "data/foret_geom_34.json",
+           "versant_geom": "data/versant_geom_34.json", "hist": "data/historique_34.json",
+           "parcelles_geom": "data/parcelles_geom_34.json",
+           "grille": "data/safran_grille_34.json"},
 }
 
 # Départements rendus par le robot quotidien (ordre = ordre du registre page).
-ACTIVE_DEPARTEMENTS = ["48", "30", "07"]
+ACTIVE_DEPARTEMENTS = ["48", "30", "07", "12", "34"]
 
 # --- Sources de données (toutes en accès libre, sans clé) ------------------
 
@@ -60,6 +79,11 @@ BRGM_WFS_TYPENAME = "ms:LITHO_1M_SIMPLIFIEE"
 
 # Open-Meteo : température quotidienne par point, gratuit et sans clé.
 OPENMETEO_URL = "https://api.open-meteo.com/v1/forecast"
+# Température de maille (depuis le 11/10/2026) : colonne T de SAFRAN
+# QUOT_SIM2_latest, lue dans l'historique long (même grille que SWI/pluie, zéro
+# requête de plus). Si ce dernier jour SAFRAN a plus de N jours de retard
+# (fichier non publié ou téléchargement coupé), on retombe sur Open-Meteo.
+TEMP_SAFRAN_RETARD_MAX = 3
 
 # BD Forêt V2 (IGN), via la Géoplateforme : occupation forestière détaillée.
 # Sert à estimer le taux de boisement de chaque maille (filtre forêt/non-forêt)
@@ -359,7 +383,8 @@ GEOM_COORD_DECIMALES = 4
 # CORRIGER localement le cumul 15 j de SAFRAN, trop lissé à 8 km pour les orages
 # cévenols. Cf. mémoire projet champipi-pluie-fiabilite.
 # 48 + 07 + 30 et TOUS leurs limitrophes (correction pluie locale multi-dépt).
-STATION_DEPTS = ["48", "07", "30", "12", "15", "43", "26", "84", "34", "13"]
+STATION_DEPTS = ["48", "07", "30", "12", "34",            # rendus
+                 "15", "43", "26", "84", "13", "81", "46", "82", "11"]  # limitrophes
 # DEUX réseaux Météo-France par département : principal (QUOT) + complémentaire
 # (QUOT_COMP, essentiellement des pluviomètres RR — ~+70 % de stations, souvent
 # plus proches du terrain). On lit les deux et on fusionne par NUM_POSTE.

@@ -37,6 +37,27 @@ def _compact(o):
     return json.dumps(o, ensure_ascii=False, separators=(",", ":"))
 
 
+# Contours simplifiés des départements (data/contours_depts.json, produit une
+# fois par robot/build_contours.py). Embarqués dans le registre inline : la
+# page dessine en léger les départements NON sélectionnés (clic = activer), y
+# compris hors-ligne. Absent -> pas de contour, la page s'en passe.
+_CONTOURS = None
+
+
+def _contour(code):
+    global _CONTOURS
+    if _CONTOURS is None:
+        _CONTOURS = {}
+        chemin = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "data", "contours_depts.json")
+        try:
+            with open(chemin, encoding="utf-8") as fp:
+                _CONTOURS = json.load(fp)
+        except Exception:
+            _CONTOURS = {}
+    return _CONTOURS.get(code)
+
+
 # ---------------------------------------------------------------------------
 # (a) Allègement de la géométrie SERVIE (pas de la source, gardée pleine).
 # Deux leviers, en pur Python (aucune dépendance en CI) :
@@ -209,6 +230,7 @@ def decouper_departement(code, nom, payload, out_dir):
     }
     registre = {
         "code": code, "nom": nom, "bbox": bbox,
+        "contour": _contour(code),
         "geom": f"geom_{code}.json?v={geom_hash}",
         "hist": (f"hist_{code}.json?v={hist_hash}" if hist_hash else None),
     }

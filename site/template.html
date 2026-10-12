@@ -32,6 +32,23 @@
   header{padding:12px 18px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;align-items:center;gap:14px}
   header h1{font-size:18px;margin:0;font-weight:650}
   header h1 span{opacity:.55;font-weight:400}
+  /* Sélecteur de départements : chaque nom du titre est une puce cliquable.
+     Sélectionné = fond vert / texte blanc ; sinon grisé (comme le titre). */
+  header h1 span#titre-depts{opacity:1}
+  #titre-depts .lbl{opacity:.55}
+  .dchip{display:inline-block;border:1px solid transparent;border-radius:11px;padding:1px 8px;margin:0 1px;
+    font:inherit;font-weight:400;line-height:1.3;cursor:pointer;background:transparent;color:inherit;opacity:.5;
+    user-select:none;-webkit-user-select:none;transition:background .15s,opacity .15s}
+  .dchip:hover{opacity:.8;border-color:var(--line)}
+  .dchip.on{background:#2e7d32;color:#fff;opacity:1;font-weight:600}
+  .dchip.on:hover{opacity:.9}
+  .dchip.shake{animation:dshake .3s}
+  /* étiquette au centre d'un département non sélectionné (contour cliquable) */
+  .dlabel{background:rgba(255,255,255,.85);border:1.5px dashed #2e7d32;color:#2e7d32;border-radius:12px;
+    padding:2px 9px;font:600 12px/1.3 system-ui,sans-serif;white-space:nowrap;cursor:pointer;
+    box-shadow:0 1px 3px rgba(0,0,0,.2);transform:translate(-50%,-50%);display:inline-block}
+  .dlabel:hover{background:#2e7d32;color:#fff}
+  @keyframes dshake{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
   .dept{display:flex;align-items:center;gap:10px;margin-left:auto;font-size:13px;color:var(--muted)}
   .badge{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:20px;background:#f0efe9;font-weight:600;color:var(--ink)}
   .dot{width:12px;height:12px;border-radius:50%}
@@ -205,6 +222,7 @@
     header{padding:9px 14px;gap:8px}
     header h1{font-size:16px}
     .dept{font-size:12px;gap:6px}
+    .dchip{padding:1px 6px;font-size:13px}
 
     /* La carte occupe tout l'espace ; la feuille se superpose. */
     main{display:block;position:relative}
@@ -340,7 +358,7 @@
 <body>
 <div id="app">
   <header>
-    <h1>🍄 Champipi <span>· cèpes en Lozère</span></h1>
+    <h1>🍄 Champipi <span id="titre-depts">· cèpes en Lozère</span></h1>
     <div class="dept">
       <span id="dept-date"></span>
       <span class="badge"><span class="dot" id="dept-dot"></span><span id="dept-val"></span></span>
@@ -356,7 +374,7 @@
         <div class="fraich" id="fraich-box"></div>
         <p class="hint">Cliquez une maille sur la carte pour voir son indice cèpe, ses composantes et l'évolution sur 15 jours.</p>
         <div class="metrics">
-          <div class="metric"><div class="k">Moyenne 48</div><div class="v" id="m-moy">—</div></div>
+          <div class="metric"><div class="k" id="m-moy-k">Moyenne 48</div><div class="v" id="m-moy">—</div></div>
           <div class="metric"><div class="k">Meilleure maille</div><div class="v" id="m-best">—</div></div>
         </div>
         <div id="lune-box"></div>
@@ -407,8 +425,32 @@ function couleur(indice){
 // qu'attend le reste du code, en fusionnant les départements chargés.
 const RAW      = CHAMPIPI || {};
 const PARAMS   = RAW.params || {};
-const DEPTS    = RAW.departements || [];        // registre : {code,nom,bbox,geom,hist}
+const DEPTS_ALL = RAW.departements || [];       // registre complet : {code,nom,bbox,contour,geom,hist}
 const DEPTDATA = RAW.dept || {};                // signal du jour par département
+// ---- Sélecteur de départements -------------------------------------------
+// `DEPTS` = sous-ensemble SÉLECTIONNÉ de DEPTS_ALL (tableau muté en place : tout
+// le code aval — géométrie à la demande, historique, synthèse, 🎒 — le lit tel
+// quel). Persisté par appareil dans localStorage ; premier lancement = Lozère
+// seule (ou le 1er du registre). Jamais vide : on ne peut pas désélectionner
+// le dernier. Les départements non sélectionnés restent dessinés en contour
+// léger (clic = activer) et cliquables dans le titre.
+const DEPTS    = [];
+const SEL_LS   = "champipi_depts";
+const DEFAUT_DEPT = DEPTS_ALL.some(d=>d.code==="48") ? "48" : (DEPTS_ALL[0]||{}).code;
+function selLire(){
+  try{ const a=JSON.parse(localStorage.getItem(SEL_LS)||"null");
+    if(Array.isArray(a)){ const ok=a.filter(c=>DEPTS_ALL.some(d=>d.code===c)); if(ok.length) return ok; }
+  }catch(e){}
+  return null;
+}
+function selEcrire(){ try{ localStorage.setItem(SEL_LS, JSON.stringify(DEPTS.map(d=>d.code))); }catch(e){} }
+function selAppliquer(codes){ DEPTS.length=0; DEPTS_ALL.forEach(d=>{ if(codes.includes(d.code)) DEPTS.push(d); }); }
+const estSelectionne = (code)=> DEPTS.some(d=>d.code===code);
+selAppliquer(selLire() || (DEFAUT_DEPT?[DEFAUT_DEPT]:[]));
+// maille -> code département (ids SAFRAN uniques au niveau national) : sert à
+// retirer la géométrie / l'historique d'un département désélectionné.
+const MAILLE_DEPT = {};
+for(const code in DEPTDATA){ for(const mid in ((DEPTDATA[code]||{}).mailles||{})) MAILLE_DEPT[mid]=code; }
 const LOADED_GEOM = {};                          // code -> true quand geom chargée
 let   HIST_STATE  = "absent";                    // absent | leger | chargement | pret
 
@@ -433,12 +475,17 @@ const D = {
 function mergeDeptInline(){
   const mailles={}; let top=[], stations=[], nb=0, dd=null, sdate=null;
   let prevDates=null; const prevMailles={};
-  for(const code in DEPTDATA){
+  // Stations : émises UNE fois par le robot (sur le 1er département du registre),
+  // on les prend donc dans TOUS les départements, sélectionnés ou non ; le
+  // filtre géographique (stationDansSelection) s'applique au rendu.
+  for(const code in DEPTDATA){ const dp=DEPTDATA[code]||{};
+    (dp.stations||[]).forEach(s=>{ if(!stations.some(x=>x.num===s.num)) stations.push(s); });
+    if(dp.stations_date) sdate=dp.stations_date;
+  }
+  for(const d of DEPTS){ const code=d.code;
     const dp=DEPTDATA[code]||{};
     Object.assign(mailles, dp.mailles||{});
     (dp.top||[]).forEach(t=>top.push(t));
-    (dp.stations||[]).forEach(s=>{ if(!stations.some(x=>x.num===s.num)) stations.push(s); });
-    if(dp.stations_date) sdate=dp.stations_date;
     nb += dp.nb_mailles||0;
     if(dp.date_donnees && (!dd || dp.date_donnees>dd)) dd=dp.date_donnees;
     if(dp.prevision && dp.prevision.dates){
@@ -454,10 +501,21 @@ function mergeDeptInline(){
   D.prevision = prevDates? {dates:prevDates, mailles:prevMailles} : null;
 }
 mergeDeptInline();
-// Titre : reflète les départements chargés (« cèpes en Lozère · Gard · Ardèche »).
-(function(){ const sp=document.querySelector("header h1 span");
-  if(sp && DEPTS.length){ sp.textContent = "· cèpes en "+DEPTS.map(d=>d.nom).join(" · "); }
-  if(DEPTS.length){ document.title = "Champipi — "+DEPTS.map(d=>d.nom).join(" · "); } })();
+// Titre = sélecteur : une puce par département du registre (nom sur bureau,
+// numéro sur mobile) ; verte = sélectionnée, grisée = cliquer pour l'activer.
+function rendreTitre(){
+  const sp=document.getElementById("titre-depts"); if(!sp || !DEPTS_ALL.length) return;
+  const mob = window.matchMedia("(max-width:760px)").matches;
+  sp.innerHTML = `<span class="lbl">· cèpes en</span> `+DEPTS_ALL.map(d=>{
+    const on=estSelectionne(d.code);
+    return `<button type="button" class="dchip${on?" on":""}" data-code="${d.code}" `+
+      `title="${d.nom} — ${on?(DEPTS.length>1?"cliquer pour retirer":"seul département affiché"):"cliquer pour afficher"}" `+
+      `aria-pressed="${on}">${mob?d.code:d.nom}</button>`; }).join("");
+  document.title = "Champipi — "+DEPTS.map(d=>d.nom).join(" · ");
+  const mk=document.getElementById("m-moy-k"); if(mk) mk.textContent="Moyenne "+DEPTS.map(d=>d.code).join("+");
+  sp.querySelectorAll(".dchip").forEach(b=>b.addEventListener("click",()=>basculerDept(b.getAttribute("data-code"))));
+}
+rendreTitre();
 
 // En-tête département (état initial ; réécrit par appliquer() au fil du rejeu).
 document.getElementById("dept-date").textContent =
@@ -598,7 +656,7 @@ function allerAuSecteur(mid){
   if(m.lat!=null && m.lon!=null){ try{ map.setView([m.lat,m.lon], Math.max(map.getZoom(),11)); }catch(e){} }
   deselectLayer(); ouvrirDetail(mid);
 }
-// Cadrage initial : union des emprises des départements du registre.
+// Cadrage initial : union des emprises des départements SÉLECTIONNÉS.
 (function(){ const bb=L.latLngBounds([]);
   DEPTS.forEach(d=>{ if(d.bbox) bb.extend(L.latLngBounds([d.bbox[0][0],d.bbox[0][1]],[d.bbox[1][0],d.bbox[1][1]])); });
   try{ if(bb.isValid()) map.fitBounds(bb,{padding:[10,10]}); }catch(e){} })();
@@ -799,6 +857,7 @@ function moduleFace(base, expo, stress, cool){
 // Historique long : chargé À LA DEMANDE (hist_XX.json). Tant qu'il est absent,
 // H=null et toute l'UI retombe sur la vue "live" (chemin de repli déjà géré).
 let H = null;
+const HIST_RAW = {};   // code dépt -> hist_XX.json déjà téléchargé (cache de session)
 let FUTURESTART = 0;
 let HDATES = [];
 const estFutur = (k)=> k>=FUTURESTART;
@@ -1081,10 +1140,12 @@ async function chargerHistorique(){
   if(HIST_STATE==="chargement") return false;
   const etatAvant=HIST_STATE; HIST_STATE="chargement";
   const dcur=(H && HCUR>=0)? HDATES[HCUR] : null;       // date courante à conserver
-  const parDept={};
-  await Promise.all(DEPTS.filter(d=>d.hist).map(async d=>{
-    try{ const r=await fetch(d.hist); if(r.ok) parDept[d.code]=await r.json(); }catch(e){}
+  // HIST_RAW garde les hist déjà téléchargés : (dé)sélectionner un département
+  // ne re-télécharge rien, on ré-assemble H depuis le cache.
+  await Promise.all(DEPTS.filter(d=>d.hist && !HIST_RAW[d.code]).map(async d=>{
+    try{ const r=await fetch(d.hist); if(r.ok) HIST_RAW[d.code]=await r.json(); }catch(e){}
   }));
+  const parDept={}; DEPTS.forEach(d=>{ if(HIST_RAW[d.code]) parDept[d.code]=HIST_RAW[d.code]; });
   const ok=finaliserHistorique(parDept);                 // ne touche H qu'en cas de succès
   if(ok){
     HIST_STATE="pret";
@@ -2202,8 +2263,16 @@ function shVue(s, k){
 //            climato a 1-3 j de retard) -> on montre le dernier jour connu ;
 //   futur  : prévision — il n'y a pas d'observation dans le futur ;
 //   load/ko/idle : historique stations en cours / indisponible / pas encore demandé.
+// Une station compte si elle tombe dans l'emprise d'un département sélectionné
+// (+ marge ~15 km : les postes limitrophes servent la correction des mailles de bord).
+function stationDansSelection(s){
+  if(s.lat==null || s.lon==null) return true;
+  for(const d of DEPTS){ if(!d.bbox) return true;
+    if(s.lat>=d.bbox[0][0]-0.14 && s.lat<=d.bbox[1][0]+0.14 && s.lon>=d.bbox[0][1]-0.19 && s.lon<=d.bbox[1][1]+0.19) return true; }
+  return false;
+}
 function vuesCourantes(){
-  const snap = D.stations || [];
+  const snap = (D.stations || []).filter(stationDansSelection);
   if(HCUR<0 || !H) return {liste:snap, date:D.stations_date, mode:"live"};
   const d=HDATES[HCUR];
   // Une station MESURE : au-delà d'aujourd'hui il n'y a rien à montrer. On se
@@ -2218,7 +2287,7 @@ function vuesCourantes(){
     k=SH.n-1; mode="retard";                     // 1-3 j de délai de publication
   }
   const out=[];
-  for(const num in SH.st){ const v=shVue(SH.st[num], k); if(v) out.push(v); }
+  for(const num in SH.st){ if(!stationDansSelection(SH.st[num])) continue; const v=shVue(SH.st[num], k); if(v) out.push(v); }
   return {liste:out, date:shDate(k), mode:mode};
 }
 // Vue de la station ouverte dans le volet, à la date courante (null si le poste
@@ -2231,7 +2300,7 @@ function vueStationCourante(num){
 
 // ---- Construction du calque + contrôle (isolé, ne doit pas casser le mobile).
 try{
-  const STA = D.stations || [];
+  const STA = D.stations || [];           // toutes (le filtre sélection s'applique au rendu)
   if(STA.length){
     const statLayer=L.layerGroup();   // OFF au départ (ajouté au clic "voir")
     const MK={};                      // num -> marqueur (réutilisé d'une date à l'autre)
@@ -2300,7 +2369,7 @@ try{
       const a=document.getElementById("stat-load");
       if(a) a.addEventListener("click",e=>{ e.preventDefault(); chargerStationsHist(); });
       const p=document.getElementById("stat-pill");
-      if(p) p.textContent = L2.length || STA.length;
+      if(p) p.textContent = L2.length || (D.stations||[]).filter(stationDansSelection).length;
     }
     // Point d'entrée appelé par appliquer() à chaque changement de date.
     majStationsHook=function(){
@@ -2314,14 +2383,18 @@ try{
     statCtrl.onAdd=function(){
       const div=L.DomUtil.create("div","statctrl");
       div.innerHTML=`<label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-        <input type="checkbox" id="stat-show"> 🌧️ Stations météo <span class="pill" id="stat-pill">${STA.length}</span></label>
+        <input type="checkbox" id="stat-show"> 🌧️ Stations météo <span class="pill" id="stat-pill">${STA.filter(stationDansSelection).length}</span></label>
         <div class="stat-note" id="stat-note"></div>`;
       L.DomEvent.disableClickPropagation(div);
       L.DomEvent.disableScrollPropagation(div);
       return div;
     };
     statCtrl.addTo(map);
-    majNoteStations({liste:STA, date:D.stations_date, mode:"live"});
+    majNoteStations({liste:STA.filter(stationDansSelection), date:D.stations_date, mode:"live"});
+    // changement de sélection de départements : recompter / redessiner
+    window.__majStationsSelection=function(){
+      try{ const cur=vuesCourantes(); if(statOn) dessinerStations(); else majNoteStations(cur); }catch(e){}
+    };
     const sc=document.getElementById("stat-show");
     if(sc) sc.addEventListener("change",e=>{
       statOn=e.target.checked;
@@ -2454,6 +2527,89 @@ chargerGeomVisibles();
 // sinon placeholder « Charger l'historique » (page sans série ni prévision).
 try{ finaliserHistoriqueLeger(); }catch(e){ H=null; HDATES=[]; }
 if(H && HDATES.length>1) activerRejeu(); else ajouterRejeuPlaceholder();
+
+// ============================================================================
+// SÉLECTEUR DE DÉPARTEMENTS : contours cliquables + bascule. Isolé en try/catch.
+// ============================================================================
+const contoursLayer = L.layerGroup().addTo(map);
+function dessinerContours(){
+  contoursLayer.clearLayers();
+  DEPTS_ALL.forEach(d=>{
+    if(!d.contour || estSelectionne(d.code)) return;      // sélectionné : rien (la forêt parle)
+    const rings=d.contour.map(r=>r.map(([x,y])=>[y,x]));
+    const pg=L.polygon(rings,{color:"#2e7d32",weight:1.8,dashArray:"6 5",opacity:.85,
+      fill:true,fillColor:"#2e7d32",fillOpacity:0.05,interactive:true,bubblingMouseEvents:false});
+    pg.bindTooltip(`${d.nom} — toucher pour afficher`,{sticky:true,direction:"top"});
+    const clic=(e)=>{ if(pendingCapture){ return; } L.DomEvent.stop(e); basculerDept(d.code); };
+    pg.on("click",clic);
+    pg.on("mouseover",()=>pg.setStyle({weight:2.6,fillOpacity:0.12,opacity:1}));
+    pg.on("mouseout",()=>pg.setStyle({weight:1.8,fillOpacity:0.05,opacity:.85}));
+    contoursLayer.addLayer(pg);
+    // étiquette « ＋ Nom » au centre : lisible et touchable sur mobile (pas de survol)
+    try{ const c=pg.getBounds().getCenter();
+      const lab=L.marker(c,{pane:"fav",interactive:true,zIndexOffset:900,
+        icon:L.divIcon({className:"",html:`<span class="dlabel">＋ ${d.nom}</span>`,iconSize:[0,0],iconAnchor:[0,0]})});
+      lab.on("click",clic); contoursLayer.addLayer(lab); }catch(e){}
+  });
+}
+// (Dé)sélection d'un département : persiste, puis rejoue toute la chaîne de
+// fusion (signal inline -> géométrie -> timeline -> volet -> stations -> contours).
+function basculerDept(code){
+  const on=estSelectionne(code);
+  if(on && DEPTS.length<=1){
+    const b=document.querySelector(`.dchip[data-code="${code}"]`);
+    if(b){ b.classList.remove("shake"); void b.offsetWidth; b.classList.add("shake"); }
+    return;                                                 // jamais zéro département
+  }
+  const codes=DEPTS.map(d=>d.code);
+  selAppliquer(on? codes.filter(c=>c!==code) : codes.concat([code]));
+  selEcrire();
+  rafraichirSelection(code, !on);
+}
+function rafraichirSelection(code, ajoute){
+  const d=DEPTS_ALL.find(x=>x.code===code);
+  const dcur=(H && HCUR>=0)? HDATES[HCUR] : null;         // date de rejeu à conserver
+  // 1. signal inline (mailles, top, prévision, stations, moyenne)
+  mergeDeptInline(); rendreTitre();
+  // 2. géométrie : on jette les features des départements sortis ; les entrants
+  //    se chargeront à la demande (chargerGeomVisibles) comme au démarrage.
+  const sel=new Set(DEPTS.map(x=>x.code));
+  D.geojson.features = D.geojson.features.filter(f=> sel.has(MAILLE_DEPT[(f.properties||{}).maille_id]));
+  for(const c in LOADED_GEOM) if(!sel.has(c)) delete LOADED_GEOM[c];
+  try{ deselectLayer(); }catch(e){}
+  if(SELMID && !sel.has(MAILLE_DEPT[SELMID])){ SELMID=null; SELFACE=null; try{ fermerDetail(); }catch(e){} }
+  SELSTA=null;
+  construireCouches();
+  // 3. timeline : ré-assemblage (historique complet depuis le cache HIST_RAW si
+  //    tous les sélectionnés y sont, sinon timeline légère + re-téléchargement).
+  const complet = HIST_STATE==="pret" && DEPTS.every(x=>!x.hist || HIST_RAW[x.code]);
+  const voulaitComplet = HIST_STATE==="pret";
+  H=null; HDATES=[]; HCUR=-1;
+  if(complet){
+    const parDept={}; DEPTS.forEach(x=>{ if(HIST_RAW[x.code]) parDept[x.code]=HIST_RAW[x.code]; });
+    if(!finaliserHistorique(parDept)){ HIST_STATE="absent"; try{ finaliserHistoriqueLeger(); }catch(e){ H=null; HDATES=[]; } }
+  } else {
+    HIST_STATE="absent";
+    try{ finaliserHistoriqueLeger(); }catch(e){ H=null; HDATES=[]; }
+  }
+  if(rejeuPlaceholder){ try{map.removeControl(rejeuPlaceholder);}catch(e){} rejeuPlaceholder=null; }
+  if(H && HDATES.length>1){ activerRejeu(); if(dcur && allerADate) allerADate(dcur); }
+  else { if(rejeuCtrl){ try{map.removeControl(rejeuCtrl);}catch(e){} rejeuCtrl=null; } ajouterRejeuPlaceholder(); appliquer(); }
+  if(!complet && voulaitComplet) chargerHistorique();     // l'utilisateur avait l'historique complet : on le complète
+  // 4. volet, pied, fraîcheur, stations, contours
+  try{ fillSynth(); }catch(e){}
+  try{ if(!SELMID && !SELSTA) remplirTop(); }catch(e){}
+  try{ remplirFoot(); }catch(e){}
+  try{ if(window.__majFraicheur) window.__majFraicheur(); }catch(e){}
+  try{ if(window.__majStationsSelection) window.__majStationsSelection(); }catch(e){}
+  dessinerContours();
+  // 5. cadrage : un département ajouté -> la carte se recale dessus ; retiré -> on ne bouge pas.
+  if(ajoute && d && d.bbox){
+    try{ map.fitBounds(L.latLngBounds([d.bbox[0][0],d.bbox[0][1]],[d.bbox[1][0],d.bbox[1][1]]),{padding:[10,10]}); }catch(e){}
+  }
+  chargerGeomVisibles();
+}
+try{ dessinerContours(); }catch(e){}
 
 // ============================================================================
 // MODE TERRAIN (PWA) : service worker + bandeau hors-ligne + « Préparer ma sortie ».
@@ -2753,8 +2909,8 @@ try{
   function evaluerFraicheur(){
     const msgs=[], infos=[]; let niv="ok";
     const monte=(n)=>{ const o={ok:0,retard:1,perime:2}; if(o[n]>o[niv]) niv=n; };
-    // 1. verdict du robot, tous départements (messages dédoublonnés)
-    for(const code in DEPTDATA){
+    // 1. verdict du robot, départements SÉLECTIONNÉS (messages dédoublonnés)
+    for(const d of DEPTS){ const code=d.code;
       const f=(DEPTDATA[code]||{}).fraicheur; if(!f) continue;
       if(f.etat==="perime"||f.etat==="absent") monte("perime"); else if(f.etat==="retard") monte("retard");
       (f.avertissements||[]).forEach(m=>{ if(!msgs.includes(m)) msgs.push(m); });
@@ -2789,6 +2945,7 @@ try{
       try{ sessionStorage.setItem("champipi_fraich_ferme", RAW.genere_le); }catch(_){} };
   }
   afficherFraicheur();
+  window.__majFraicheur=afficherFraicheur;
   // l'âge change à minuit ou après une longue veille de la PWA : on réévalue
   document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") afficherFraicheur(); });
 }catch(e){ /* jamais bloquant */ }
